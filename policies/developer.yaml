@@ -1,0 +1,61 @@
+# Developer Policy Template
+# For software development workflows — code editing, building, testing.
+#
+# Usage: vault unlock ~/project --permission write
+
+filesystem:
+  block_patterns:
+    - "**/.env"
+    - "**/.env.*"
+    - "**/*.pem"
+    - "**/*.key"
+    - "**/id_rsa*"
+    - "**/id_ed25519*"
+    - "**/credentials*"
+    - "**/.git/config"
+    - "**/.aws/**"
+    - "**/.ssh/**"
+    - "**/.gnupg/**"
+    - "**/.npmrc"
+    - "**/.pypirc"
+    - "**/.docker/config.json"
+    - "**/.kube/config"
+    # Development-specific blocks
+    - "**/node_modules/.cache/**"
+    - "**/.next/cache/**"
+
+  size_limits:
+    max_read_bytes: 10485760    # 10 MB
+    max_write_bytes: 5242880    # 5 MB
+
+  # Allow common development file types
+  extension_allowlist:
+    - .ts
+    - .tsx
+    - .js
+    - .jsx
+    - .json
+    - .md
+    - .yaml
+    - .yml
+    - .css
+    - .html
+    - .py
+    - .rs
+    - .go
+    - .toml
+    - .txt
+    - .sh
+    - .sql
+    - .graphql
+    - .svg
+
+  content_scan:
+    - pattern: '(?i)(api[_-]?key|secret[_-]?key|password|token)\s*[:=]\s*["\x27]?[A-Za-z0-9_\-]{16,}'
+      message: "Content appears to contain hardcoded secrets or API keys"
+
+proxy:
+  default_ttl: 1800
+  rate_limit:
+    max_requests: 200
+    window_seconds: 60

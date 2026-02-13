@@ -1,0 +1,42 @@
+# BlindKey Default Policy
+# Sensible defaults for most use cases.
+
+filesystem:
+  # Paths that are ALWAYS blocked, even if a parent is unlocked
+  block_patterns:
+    - "**/.env"
+    - "**/.env.*"
+    - "**/*.pem"
+    - "**/*.key"
+    - "**/id_rsa*"
+    - "**/id_ed25519*"
+    - "**/credentials*"
+    - "**/.git/config"
+    - "**/.aws/**"
+    - "**/.ssh/**"
+    - "**/.gnupg/**"
+    - "**/.npmrc"
+    - "**/.pypirc"
+    - "**/.docker/config.json"
+    - "**/.kube/config"
+
+  # Size limits per operation
+  size_limits:
+    max_read_bytes: 10485760    # 10 MB
+    max_write_bytes: 5242880    # 5 MB
+
+  # Content scanning on writes
+  content_scan:
+    - pattern: '(?i)(api[_-]?key|secret[_-]?key|password|token)\s*[:=]\s*["\x27]?[A-Za-z0-9_\-]{16,}'
+      message: "Content appears to contain hardcoded secrets or API keys"
+    - pattern: '\b\d{3}-\d{2}-\d{4}\b'
+      message: "Content appears to contain SSN-format data"
+
+proxy:
+  # Default injection TTL (seconds)
+  default_ttl: 1800
+
+  # Rate limit per vault reference
+  rate_limit:
+    max_requests: 100
+    window_seconds: 60

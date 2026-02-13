@@ -1,0 +1,20 @@
+{
+  "name": "@blindkey/local-vault",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@blindkey/core": "*",
+    "better-sqlite3": "^11.7.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0",
+    "@types/better-sqlite3": "^7.6.0"
+  }
+}

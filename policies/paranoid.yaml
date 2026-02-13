@@ -1,0 +1,49 @@
+# Paranoid Policy Template
+# Maximum lockdown. Every action requires explicit approval.
+# For high-security environments or when evaluating a new agent.
+
+filesystem:
+  block_patterns:
+    - "**/.env"
+    - "**/.env.*"
+    - "**/*.pem"
+    - "**/*.key"
+    - "**/*.p12"
+    - "**/*.pfx"
+    - "**/*.jks"
+    - "**/id_rsa*"
+    - "**/id_ed25519*"
+    - "**/credentials*"
+    - "**/secrets*"
+    - "**/.git/**"
+    - "**/.aws/**"
+    - "**/.ssh/**"
+    - "**/.gnupg/**"
+    - "**/.npmrc"
+    - "**/.pypirc"
+    - "**/.docker/**"
+    - "**/.kube/**"
+    - "**/.terraform/**"
+    - "**/node_modules/**"
+    - "**/.venv/**"
+    - "**/venv/**"
+
+  size_limits:
+    max_read_bytes: 1048576     # 1 MB
+    max_write_bytes: 524288     # 512 KB
+
+  content_scan:
+    - pattern: '(?i)(api[_-]?key|secret[_-]?key|password|token|bearer)\s*[:=]\s*["\x27]?[A-Za-z0-9_\-]{8,}'
+      message: "Content may contain secrets (paranoid threshold)"
+    - pattern: '\b\d{3}-\d{2}-\d{4}\b'
+      message: "Content appears to contain SSN-format data"
+    - pattern: '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+      message: "Content contains email addresses"
+    - pattern: '(?i)(BEGIN\s+(RSA|DSA|EC|OPENSSH)\s+PRIVATE\s+KEY)'
+      message: "Content contains a private key"
+
+proxy:
+  default_ttl: 300              # 5 minutes — short window
+  rate_limit:
+    max_requests: 20
+    window_seconds: 60

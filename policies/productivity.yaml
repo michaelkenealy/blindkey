@@ -1,0 +1,49 @@
+# Productivity Policy Template
+# For calendar, email, notes, and task management workflows.
+# Human approval required for sends and deletes.
+
+filesystem:
+  block_patterns:
+    - "**/.env"
+    - "**/.env.*"
+    - "**/*.pem"
+    - "**/*.key"
+    - "**/id_rsa*"
+    - "**/id_ed25519*"
+    - "**/credentials*"
+    - "**/.git/config"
+    - "**/.aws/**"
+    - "**/.ssh/**"
+    - "**/.gnupg/**"
+    - "**/.npmrc"
+    - "**/.pypirc"
+    - "**/.docker/config.json"
+    - "**/.kube/config"
+
+  size_limits:
+    max_read_bytes: 5242880     # 5 MB
+    max_write_bytes: 1048576    # 1 MB
+
+  content_scan:
+    - pattern: '(?i)(api[_-]?key|secret[_-]?key|password|token)\s*[:=]\s*["\x27]?[A-Za-z0-9_\-]{16,}'
+      message: "Content appears to contain hardcoded secrets or API keys"
+    - pattern: '\b\d{3}-\d{2}-\d{4}\b'
+      message: "Content appears to contain SSN-format data"
+
+proxy:
+  default_ttl: 3600             # 60 minutes
+  rate_limit:
+    max_requests: 30
+    window_seconds: 60
+
+  # Human approval gates
+  approval_rules:
+    - condition: "action == 'send_email'"
+      timeout_seconds: 300
+      on_timeout: deny
+    - condition: "action == 'delete'"
+      timeout_seconds: 120
+      on_timeout: deny
+    - condition: "action == 'calendar_create'"
+      timeout_seconds: 300
+      on_timeout: deny
