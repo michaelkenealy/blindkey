@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Lock, LockOpen, Eye, EyeOff, Plus, X, Copy, Shield, FolderOpen, Folder, Key, Activity, AlertTriangle, Check, RefreshCw, Settings } from "lucide-react";
+import { Lock, LockOpen, Eye, EyeOff, Plus, X, Copy, Shield, FolderOpen, Folder, Key, Activity, AlertTriangle, Check, RefreshCw, Settings, ChevronRight, Zap } from "lucide-react";
 
-// ─── Design Tokens (from Design System v1.0) ───
+// ─── Design Tokens ───
 const tokens = {
   bg: { root: "#0a0a0a", surface: "#111111", elevated: "#1a1a1a", input: "#141414" },
   border: { default: "#222222", hover: "#333333", focus: "#555555" },
@@ -17,7 +17,7 @@ const tokens = {
 // ─── Badge Component ───
 type BadgeColor = "accent" | "red" | "yellow" | "blue" | "gray";
 
-const Badge = ({ children, color = "accent", className = "" }: { children: React.ReactNode; color?: BadgeColor; className?: string }) => {
+const Badge = ({ children, color = "accent" }: { children: React.ReactNode; color?: BadgeColor }) => {
   const colors: Record<BadgeColor, { bg: string; text: string; border: string }> = {
     accent: { bg: tokens.accent.subtle, text: tokens.accent.base, border: tokens.accent.border },
     red: { bg: tokens.status.lockedSubtle, text: tokens.status.locked, border: "rgba(239,68,68,0.25)" },
@@ -27,7 +27,7 @@ const Badge = ({ children, color = "accent", className = "" }: { children: React
   };
   const c = colors[color];
   return (
-    <span className={className} style={{
+    <span style={{
       display: "inline-flex", alignItems: "center", gap: 4,
       padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 500,
       letterSpacing: "0.04em", textTransform: "uppercase",
@@ -36,7 +36,7 @@ const Badge = ({ children, color = "accent", className = "" }: { children: React
   );
 };
 
-// ─── Secrets Page ───
+// ─── Shared State Types ───
 interface SecretEntry {
   id: number;
   name: string;
@@ -48,13 +48,318 @@ interface SecretEntry {
   created: string;
 }
 
-const SecretsPage = () => {
-  const [secrets, setSecrets] = useState<SecretEntry[]>([
-    { id: 1, name: "STRIPE_PROD_KEY", value: "sk_live_51Hx...a8Ks", service: "Stripe", domains: ["api.stripe.com"], ttl: 30, visible: false, created: "2 days ago" },
-    { id: 2, name: "GITHUB_PAT", value: "ghp_xK29...mNp4", service: "GitHub", domains: ["api.github.com"], ttl: 60, visible: false, created: "5 days ago" },
-    { id: 3, name: "OPENAI_API_KEY", value: "sk-proj-9x...wR2f", service: "OpenAI", domains: ["api.openai.com"], ttl: 30, visible: false, created: "1 week ago" },
-    { id: 4, name: "AWS_SECRET_KEY", value: "wJalrXUtnF...QMZK", service: "AWS", domains: ["*.amazonaws.com"], ttl: 15, visible: false, created: "1 week ago" },
-  ]);
+interface FsGrant {
+  id: number;
+  path: string;
+  permission: string;
+  recursive: boolean;
+  approval: boolean;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SIMPLE MODE - Minimal UI for non-experts
+// Just API Keys and Folder Access
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface SimpleDashboardProps {
+  secrets: SecretEntry[];
+  setSecrets: React.Dispatch<React.SetStateAction<SecretEntry[]>>;
+  grants: FsGrant[];
+  setGrants: React.Dispatch<React.SetStateAction<FsGrant[]>>;
+  onSwitchToExpert: () => void;
+}
+
+const SimpleDashboard = ({ secrets, setSecrets, grants, setGrants, onSwitchToExpert }: SimpleDashboardProps) => {
+  const [newKey, setNewKey] = useState("");
+  const [newVal, setNewVal] = useState("");
+  const [newPath, setNewPath] = useState("");
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const addSecret = () => {
+    if (!newKey || !newVal) return;
+    setSecrets([...secrets, {
+      id: Date.now(), name: newKey.toUpperCase(), value: newVal, service: "Custom",
+      domains: [], ttl: 30, visible: false, created: "just now"
+    }]);
+    setNewKey(""); setNewVal("");
+  };
+
+  const removeSecret = (id: number) => setSecrets(secrets.filter(s => s.id !== id));
+
+  const addFolder = () => {
+    if (!newPath) return;
+    const path = newPath.startsWith("/") ? newPath : `/${newPath}`;
+    if (grants.find(g => g.path === path)) return;
+    setGrants([...grants, { id: Date.now(), path, permission: "read", recursive: true, approval: false }]);
+    setNewPath("");
+  };
+
+  const removeFolder = (id: number) => setGrants(grants.filter(g => g.id !== id));
+
+  const copyRef = (name: string) => {
+    navigator.clipboard.writeText(`bk://${name.toLowerCase().replace(/_/g, "-")}`);
+    setCopied(name);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  return (
+    <div style={{ maxWidth: 640, margin: "0 auto", padding: "40px 24px" }}>
+      {/* Header */}
+      <div style={{ textAlign: "center", marginBottom: 48 }}>
+        <div style={{
+          width: 56, height: 56, borderRadius: 16, margin: "0 auto 16px",
+          background: `linear-gradient(135deg, ${tokens.accent.base}, #00a85a)`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <Shield size={28} style={{ color: tokens.text.inverse }} />
+        </div>
+        <h1 style={{ fontSize: 28, fontWeight: 600, color: tokens.text.primary, margin: "0 0 8px" }}>
+          BlindKey
+        </h1>
+        <p style={{ fontSize: 15, color: tokens.text.secondary, margin: 0 }}>
+          Secure your API keys. Control folder access.
+        </p>
+      </div>
+
+      {/* ─── API Keys Section ─── */}
+      <div style={{ marginBottom: 40 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <Key size={18} style={{ color: tokens.accent.base }} />
+          <h2 style={{ fontSize: 16, fontWeight: 600, color: tokens.text.primary, margin: 0 }}>
+            API Keys
+          </h2>
+          <Badge color="accent">{secrets.length}</Badge>
+        </div>
+
+        {/* Existing Keys */}
+        <div style={{
+          border: `1px solid ${tokens.border.default}`, borderRadius: 12,
+          overflow: "hidden", marginBottom: 12,
+        }}>
+          {secrets.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: tokens.text.tertiary, fontSize: 14 }}>
+              No API keys yet. Add one below.
+            </div>
+          ) : (
+            secrets.map((s, i) => (
+              <div key={s.id} style={{
+                display: "flex", alignItems: "center", gap: 12, padding: "14px 16px",
+                borderBottom: i < secrets.length - 1 ? `1px solid ${tokens.border.default}` : "none",
+              }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 8, background: tokens.bg.elevated,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <Key size={16} style={{ color: tokens.accent.base }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{
+                    fontFamily: "'Geist Mono', monospace", fontSize: 14,
+                    fontWeight: 500, color: tokens.text.primary,
+                  }}>
+                    {s.name}
+                  </div>
+                  <div style={{ fontSize: 12, color: tokens.text.tertiary, marginTop: 2 }}>
+                    {s.service} · Added {s.created}
+                  </div>
+                </div>
+                <button onClick={() => copyRef(s.name)} style={{
+                  background: "none", border: "none", cursor: "pointer", padding: 8,
+                  color: copied === s.name ? tokens.accent.base : tokens.text.tertiary,
+                  transition: "color 150ms",
+                }}>
+                  {copied === s.name ? <Check size={16} /> : <Copy size={16} />}
+                </button>
+                <button onClick={() => removeSecret(s.id)} style={{
+                  background: "none", border: "none", cursor: "pointer", padding: 8,
+                  color: tokens.text.tertiary, transition: "color 150ms",
+                }}
+                  onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = tokens.status.locked}
+                  onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = tokens.text.tertiary}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Add New Key */}
+        <div style={{
+          display: "flex", gap: 8, padding: 4, background: tokens.bg.surface,
+          borderRadius: 12, border: `1px solid ${tokens.border.default}`,
+        }}>
+          <input
+            value={newKey}
+            onChange={e => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
+            placeholder="KEY_NAME"
+            style={{
+              flex: "0 0 140px", padding: "12px 14px", borderRadius: 8,
+              background: tokens.bg.input, border: "none", outline: "none",
+              fontFamily: "'Geist Mono', monospace", fontSize: 13,
+              color: tokens.text.primary,
+            }}
+          />
+          <input
+            value={newVal}
+            onChange={e => setNewVal(e.target.value)}
+            placeholder="Paste your API key here..."
+            type="password"
+            style={{
+              flex: 1, padding: "12px 14px", borderRadius: 8,
+              background: tokens.bg.input, border: "none", outline: "none",
+              fontSize: 13, color: tokens.text.primary,
+            }}
+          />
+          <button onClick={addSecret} disabled={!newKey || !newVal} style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "0 20px",
+            background: newKey && newVal ? tokens.accent.base : tokens.bg.elevated,
+            color: newKey && newVal ? tokens.text.inverse : tokens.text.tertiary,
+            border: "none", borderRadius: 8, fontSize: 14, fontWeight: 500,
+            cursor: newKey && newVal ? "pointer" : "default",
+            transition: "all 150ms",
+          }}>
+            <Plus size={16} /> Add
+          </button>
+        </div>
+      </div>
+
+      {/* ─── Folder Access Section ─── */}
+      <div style={{ marginBottom: 40 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <FolderOpen size={18} style={{ color: tokens.accent.base }} />
+          <h2 style={{ fontSize: 16, fontWeight: 600, color: tokens.text.primary, margin: 0 }}>
+            Folder Access
+          </h2>
+          <Badge color="accent">{grants.length}</Badge>
+        </div>
+
+        {/* Info Banner */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
+          background: tokens.accent.subtle, borderRadius: 8, marginBottom: 12,
+          border: `1px solid ${tokens.accent.border}`,
+        }}>
+          <Shield size={16} style={{ color: tokens.accent.base, flexShrink: 0 }} />
+          <span style={{ fontSize: 13, color: tokens.text.secondary }}>
+            Agents can only access folders you unlock. Everything else is blocked.
+          </span>
+        </div>
+
+        {/* Granted Folders */}
+        <div style={{
+          border: `1px solid ${tokens.border.default}`, borderRadius: 12,
+          overflow: "hidden", marginBottom: 12,
+        }}>
+          {grants.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: tokens.text.tertiary, fontSize: 14 }}>
+              No folders unlocked. Add a path below.
+            </div>
+          ) : (
+            grants.map((g, i) => (
+              <div key={g.id} style={{
+                display: "flex", alignItems: "center", gap: 12, padding: "14px 16px",
+                borderBottom: i < grants.length - 1 ? `1px solid ${tokens.border.default}` : "none",
+              }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 8, background: tokens.accent.subtle,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <LockOpen size={16} style={{ color: tokens.accent.base }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{
+                    fontFamily: "'Geist Mono', monospace", fontSize: 14,
+                    fontWeight: 500, color: tokens.text.primary,
+                  }}>
+                    {g.path}
+                  </div>
+                  <div style={{ fontSize: 12, color: tokens.text.tertiary, marginTop: 2 }}>
+                    Read access · Includes subfolders
+                  </div>
+                </div>
+                <button onClick={() => removeFolder(g.id)} style={{
+                  padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500,
+                  background: tokens.status.lockedSubtle, color: tokens.status.locked,
+                  border: `1px solid rgba(239,68,68,0.2)`, cursor: "pointer",
+                  transition: "all 150ms",
+                }}>
+                  Revoke
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Add New Folder */}
+        <div style={{
+          display: "flex", gap: 8, padding: 4, background: tokens.bg.surface,
+          borderRadius: 12, border: `1px solid ${tokens.border.default}`,
+        }}>
+          <input
+            value={newPath}
+            onChange={e => setNewPath(e.target.value)}
+            placeholder="/path/to/folder"
+            style={{
+              flex: 1, padding: "12px 14px", borderRadius: 8,
+              background: tokens.bg.input, border: "none", outline: "none",
+              fontFamily: "'Geist Mono', monospace", fontSize: 13,
+              color: tokens.text.primary,
+            }}
+            onKeyDown={e => e.key === "Enter" && addFolder()}
+          />
+          <button onClick={addFolder} disabled={!newPath} style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "0 20px",
+            background: newPath ? tokens.accent.base : tokens.bg.elevated,
+            color: newPath ? tokens.text.inverse : tokens.text.tertiary,
+            border: "none", borderRadius: 8, fontSize: 14, fontWeight: 500,
+            cursor: newPath ? "pointer" : "default",
+            transition: "all 150ms",
+          }}>
+            <LockOpen size={16} /> Unlock
+          </button>
+        </div>
+      </div>
+
+      {/* ─── Switch to Expert Mode ─── */}
+      <div style={{ textAlign: "center", paddingTop: 16 }}>
+        <button onClick={onSwitchToExpert} style={{
+          display: "inline-flex", alignItems: "center", gap: 8,
+          padding: "10px 20px", background: "none",
+          border: `1px solid ${tokens.border.default}`,
+          borderRadius: 8, color: tokens.text.secondary, fontSize: 13,
+          cursor: "pointer", transition: "all 150ms",
+        }}
+          onMouseEnter={e => {
+            (e.currentTarget as HTMLButtonElement).style.borderColor = tokens.border.hover;
+            (e.currentTarget as HTMLButtonElement).style.color = tokens.text.primary;
+          }}
+          onMouseLeave={e => {
+            (e.currentTarget as HTMLButtonElement).style.borderColor = tokens.border.default;
+            (e.currentTarget as HTMLButtonElement).style.color = tokens.text.secondary;
+          }}
+        >
+          <Zap size={14} /> Switch to Expert Mode
+          <ChevronRight size={14} />
+        </button>
+        <p style={{ fontSize: 12, color: tokens.text.tertiary, marginTop: 8 }}>
+          Sessions, audit logs, policies, and advanced settings
+        </p>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXPERT MODE PAGES (original full-featured pages)
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface SecretsPageProps {
+  secrets: SecretEntry[];
+  setSecrets: React.Dispatch<React.SetStateAction<SecretEntry[]>>;
+}
+
+const SecretsPage = ({ secrets, setSecrets }: SecretsPageProps) => {
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
   const [newDomain, setNewDomain] = useState("");
@@ -76,18 +381,14 @@ const SecretsPage = () => {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32 }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 600, color: tokens.text.primary, margin: 0 }}>Secrets</h1>
-          <p style={{ fontSize: 14, color: tokens.text.secondary, margin: "6px 0 0" }}>
-            API keys and tokens your agent can use without seeing. Injected at runtime via vault references.
-          </p>
-        </div>
+      <div style={{ marginBottom: 32 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 600, color: tokens.text.primary, margin: 0 }}>Secrets</h1>
+        <p style={{ fontSize: 14, color: tokens.text.secondary, margin: "6px 0 0" }}>
+          API keys and tokens with domain restrictions and injection TTLs.
+        </p>
       </div>
 
-      {/* Secret Rows */}
       <div style={{ border: `1px solid ${tokens.border.default}`, borderRadius: 8, overflow: "hidden" }}>
-        {/* Header */}
         <div style={{
           display: "grid", gridTemplateColumns: "200px 1fr 140px 100px 48px",
           padding: "10px 16px", background: tokens.bg.surface,
@@ -108,46 +409,36 @@ const SecretsPage = () => {
                 borderBottom: i < secrets.length - 1 || expandedId === s.id ? `1px solid ${tokens.border.default}` : "none",
                 cursor: "pointer",
                 background: expandedId === s.id ? tokens.bg.elevated : "transparent",
-                transition: "background 150ms ease",
+                transition: "background 150ms",
               }}
               onMouseEnter={e => { if (expandedId !== s.id) (e.currentTarget as HTMLDivElement).style.background = tokens.bg.elevated; }}
               onMouseLeave={e => { if (expandedId !== s.id) (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
             >
-              <span style={{ fontFamily: "'Geist Mono', 'SF Mono', monospace", fontSize: 13, color: tokens.text.primary, fontWeight: 500 }}>
+              <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 13, color: tokens.text.primary, fontWeight: 500 }}>
                 {s.name}
               </span>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontFamily: "'Geist Mono', 'SF Mono', monospace", fontSize: 12, color: tokens.text.tertiary }}>
+                <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.tertiary }}>
                   bk://{s.name.toLowerCase().replace(/_/g, "-")}
                 </span>
                 <button onClick={(e) => { e.stopPropagation(); copyRef(s.name); }} style={{
                   background: "none", border: "none", cursor: "pointer", padding: 2,
                   color: copied === s.name ? tokens.accent.base : tokens.text.tertiary,
-                  transition: "color 150ms",
                 }}>
                   {copied === s.name ? <Check size={14} /> : <Copy size={14} />}
                 </button>
               </div>
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {s.domains.map((d, di) => (
-                  <Badge key={di} color="gray">{d}</Badge>
-                ))}
+                {s.domains.map((d, di) => <Badge key={di} color="gray">{d}</Badge>)}
               </div>
               <span style={{ fontSize: 12, color: tokens.text.secondary }}>{s.ttl}m</span>
-              <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                <button onClick={(e) => { e.stopPropagation(); removeSecret(s.id); }} style={{
-                  background: "none", border: "none", cursor: "pointer", padding: 4, borderRadius: 4,
-                  color: tokens.text.tertiary, transition: "color 150ms",
-                }}
-                  onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = tokens.status.locked}
-                  onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = tokens.text.tertiary}
-                >
-                  <X size={16} />
-                </button>
-              </div>
+              <button onClick={(e) => { e.stopPropagation(); removeSecret(s.id); }} style={{
+                background: "none", border: "none", cursor: "pointer", padding: 4, color: tokens.text.tertiary,
+              }}>
+                <X size={16} />
+              </button>
             </div>
 
-            {/* Expanded Detail */}
             {expandedId === s.id && (
               <div style={{
                 padding: "16px 16px 16px 32px", background: tokens.bg.surface,
@@ -160,13 +451,12 @@ const SecretsPage = () => {
                     <div style={{
                       flex: 1, padding: "8px 12px", borderRadius: 6,
                       background: tokens.bg.input, border: `1px solid ${tokens.border.default}`,
-                      fontFamily: "'Geist Mono', 'SF Mono', monospace", fontSize: 13, color: tokens.text.primary,
+                      fontFamily: "'Geist Mono', monospace", fontSize: 13, color: tokens.text.primary,
                     }}>
                       {s.visible ? s.value : "\u2022".repeat(24)}
                     </div>
                     <button onClick={() => toggleVisible(s.id)} style={{
-                      background: "none", border: "none", cursor: "pointer", padding: 4,
-                      color: tokens.text.tertiary,
+                      background: "none", border: "none", cursor: "pointer", padding: 4, color: tokens.text.tertiary,
                     }}>
                       {s.visible ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
@@ -176,35 +466,19 @@ const SecretsPage = () => {
                   <label style={{ fontSize: 11, color: tokens.text.tertiary, textTransform: "uppercase", letterSpacing: "0.04em" }}>Service</label>
                   <div style={{ marginTop: 6, fontSize: 14, color: tokens.text.primary }}>{s.service}</div>
                 </div>
-                <div>
-                  <label style={{ fontSize: 11, color: tokens.text.tertiary, textTransform: "uppercase", letterSpacing: "0.04em" }}>Created</label>
-                  <div style={{ marginTop: 6, fontSize: 13, color: tokens.text.secondary }}>{s.created}</div>
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: tokens.text.tertiary, textTransform: "uppercase", letterSpacing: "0.04em" }}>Injection TTL</label>
-                  <div style={{ marginTop: 6, fontSize: 13, color: tokens.text.secondary }}>{s.ttl} minutes</div>
-                </div>
                 <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, paddingTop: 8 }}>
                   <button style={{
                     display: "flex", alignItems: "center", gap: 6, padding: "6px 12px",
                     background: "none", border: `1px solid ${tokens.border.default}`,
                     borderRadius: 6, color: tokens.text.secondary, fontSize: 13, cursor: "pointer",
-                    transition: "all 150ms",
-                  }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = tokens.border.hover; (e.currentTarget as HTMLButtonElement).style.color = tokens.text.primary; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = tokens.border.default; (e.currentTarget as HTMLButtonElement).style.color = tokens.text.secondary; }}
-                  >
+                  }}>
                     <RefreshCw size={14} /> Rotate
                   </button>
                   <button style={{
                     display: "flex", alignItems: "center", gap: 6, padding: "6px 12px",
                     background: "none", border: `1px solid ${tokens.border.default}`,
                     borderRadius: 6, color: tokens.text.secondary, fontSize: 13, cursor: "pointer",
-                    transition: "all 150ms",
-                  }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = tokens.border.hover; (e.currentTarget as HTMLButtonElement).style.color = tokens.text.primary; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = tokens.border.default; (e.currentTarget as HTMLButtonElement).style.color = tokens.text.secondary; }}
-                  >
+                  }}>
                     <Settings size={14} /> Edit Policy
                   </button>
                 </div>
@@ -213,53 +487,24 @@ const SecretsPage = () => {
           </div>
         ))}
 
-        {/* Add New Row */}
-        <div style={{
-          display: "grid", gridTemplateColumns: "200px 1fr 140px auto",
-          padding: "8px 16px", gap: 8, alignItems: "center",
-        }}>
-          <input
-            value={newKey} onChange={e => setNewKey(e.target.value)}
-            placeholder="SECRET_NAME"
-            style={{
-              padding: "8px 12px", borderRadius: 6, border: `1px solid ${tokens.border.default}`,
-              background: tokens.bg.input, color: tokens.text.primary,
-              fontFamily: "'Geist Mono', 'SF Mono', monospace", fontSize: 13, outline: "none",
-              transition: "border-color 150ms",
-            }}
-            onFocus={e => (e.target as HTMLInputElement).style.borderColor = tokens.border.focus}
-            onBlur={e => (e.target as HTMLInputElement).style.borderColor = tokens.border.default}
-          />
-          <input
-            value={newVal} onChange={e => setNewVal(e.target.value)}
-            placeholder="Secret value..."
-            type="password"
-            style={{
-              padding: "8px 12px", borderRadius: 6, border: `1px solid ${tokens.border.default}`,
-              background: tokens.bg.input, color: tokens.text.primary, fontSize: 13, outline: "none",
-              transition: "border-color 150ms",
-            }}
-            onFocus={e => (e.target as HTMLInputElement).style.borderColor = tokens.border.focus}
-            onBlur={e => (e.target as HTMLInputElement).style.borderColor = tokens.border.default}
-          />
-          <input
-            value={newDomain} onChange={e => setNewDomain(e.target.value)}
-            placeholder="api.domain.com"
-            style={{
-              padding: "8px 12px", borderRadius: 6, border: `1px solid ${tokens.border.default}`,
-              background: tokens.bg.input, color: tokens.text.secondary, fontSize: 12, outline: "none",
-              transition: "border-color 150ms",
-            }}
-            onFocus={e => (e.target as HTMLInputElement).style.borderColor = tokens.border.focus}
-            onBlur={e => (e.target as HTMLInputElement).style.borderColor = tokens.border.default}
-          />
+        <div style={{ display: "grid", gridTemplateColumns: "200px 1fr 140px auto", padding: "8px 16px", gap: 8, alignItems: "center" }}>
+          <input value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="SECRET_NAME" style={{
+            padding: "8px 12px", borderRadius: 6, border: `1px solid ${tokens.border.default}`,
+            background: tokens.bg.input, color: tokens.text.primary, fontFamily: "'Geist Mono', monospace", fontSize: 13, outline: "none",
+          }} />
+          <input value={newVal} onChange={e => setNewVal(e.target.value)} placeholder="Secret value..." type="password" style={{
+            padding: "8px 12px", borderRadius: 6, border: `1px solid ${tokens.border.default}`,
+            background: tokens.bg.input, color: tokens.text.primary, fontSize: 13, outline: "none",
+          }} />
+          <input value={newDomain} onChange={e => setNewDomain(e.target.value)} placeholder="api.domain.com" style={{
+            padding: "8px 12px", borderRadius: 6, border: `1px solid ${tokens.border.default}`,
+            background: tokens.bg.input, color: tokens.text.secondary, fontSize: 12, outline: "none",
+          }} />
           <button onClick={addSecret} style={{
             display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
             background: newKey && newVal ? tokens.accent.base : tokens.bg.elevated,
             color: newKey && newVal ? tokens.text.inverse : tokens.text.tertiary,
-            border: "none", borderRadius: 6, fontSize: 13, fontWeight: 500,
-            cursor: newKey && newVal ? "pointer" : "default",
-            transition: "all 150ms",
+            border: "none", borderRadius: 6, fontSize: 13, fontWeight: 500, cursor: newKey && newVal ? "pointer" : "default",
           }}>
             <Plus size={14} /> Add
           </button>
@@ -269,22 +514,12 @@ const SecretsPage = () => {
   );
 };
 
-// ─── Filesystem Page ───
-interface FsGrant {
-  id: number;
-  path: string;
-  permission: string;
-  recursive: boolean;
-  approval: boolean;
+interface FilesystemPageProps {
+  grants: FsGrant[];
+  setGrants: React.Dispatch<React.SetStateAction<FsGrant[]>>;
 }
 
-const FilesystemPage = () => {
-  const [grants, setGrants] = useState<FsGrant[]>([
-    { id: 1, path: "/project/src", permission: "read", recursive: true, approval: false },
-    { id: 2, path: "/project/output", permission: "write", recursive: true, approval: false },
-    { id: 3, path: "/project/deploy", permission: "write", recursive: false, approval: true },
-  ]);
-
+const FilesystemPage = ({ grants, setGrants }: FilesystemPageProps) => {
   const blocked = [
     { path: "~/.ssh", reason: "SSH keys" },
     { path: "~/.aws", reason: "AWS credentials" },
@@ -299,13 +534,11 @@ const FilesystemPage = () => {
     { path: "/project/deploy", depth: 1, type: "dir", sensitive: false },
     { path: "/project/.env", depth: 1, type: "file", sensitive: true },
     { path: "/documents", depth: 0, type: "dir", sensitive: false },
-    { path: "/documents/contracts", depth: 1, type: "dir", sensitive: false },
     { path: "/.ssh", depth: 0, type: "dir", sensitive: true },
     { path: "/.aws", depth: 0, type: "dir", sensitive: true },
   ];
 
   const getGrant = (path: string) => grants.find(g => g.path === path);
-
   const toggleGrant = (path: string) => {
     const existing = getGrant(path);
     if (existing) {
@@ -314,7 +547,6 @@ const FilesystemPage = () => {
       setGrants([...grants, { id: Date.now(), path, permission: "read", recursive: true, approval: false }]);
     }
   };
-
   const updatePermission = (path: string, perm: string) => {
     setGrants(grants.map(g => g.path === path ? { ...g, permission: perm } : g));
   };
@@ -324,37 +556,33 @@ const FilesystemPage = () => {
       <div style={{ marginBottom: 32 }}>
         <h1 style={{ fontSize: 24, fontWeight: 600, color: tokens.text.primary, margin: 0 }}>Filesystem</h1>
         <p style={{ fontSize: 14, color: tokens.text.secondary, margin: "6px 0 0" }}>
-          Control which directories your agent can access. Everything is locked by default.
+          Control directory access with granular permissions.
         </p>
       </div>
 
-      {/* Default Deny Banner */}
       <div style={{
         display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
-        background: "rgba(0,214,114,0.04)", border: `1px solid ${tokens.accent.border}`,
+        background: tokens.accent.subtle, border: `1px solid ${tokens.accent.border}`,
         borderRadius: 8, marginBottom: 24,
       }}>
-        <Shield size={18} style={{ color: tokens.accent.base, flexShrink: 0 }} />
+        <Shield size={18} style={{ color: tokens.accent.base }} />
         <span style={{ fontSize: 13, color: tokens.text.secondary }}>
-          <strong style={{ color: tokens.text.primary }}>Default-deny active.</strong> Your agent cannot see or access any path unless explicitly unlocked below.
+          <strong style={{ color: tokens.text.primary }}>Default-deny active.</strong> Agents cannot access any path unless unlocked.
         </span>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24 }}>
-        {/* File Tree */}
         <div style={{ border: `1px solid ${tokens.border.default}`, borderRadius: 8, overflow: "hidden" }}>
           <div style={{
             padding: "10px 16px", background: tokens.bg.surface,
             borderBottom: `1px solid ${tokens.border.default}`,
-            fontSize: 11, fontWeight: 500, color: tokens.text.tertiary,
-            letterSpacing: "0.04em", textTransform: "uppercase",
+            fontSize: 11, fontWeight: 500, color: tokens.text.tertiary, letterSpacing: "0.04em", textTransform: "uppercase",
           }}>
             Directory Tree
           </div>
 
           {tree.map((item, i) => {
             const grant = getGrant(item.path);
-            const sensitive = item.sensitive;
             const isGranted = !!grant;
 
             return (
@@ -363,59 +591,40 @@ const FilesystemPage = () => {
                 padding: "10px 16px", paddingLeft: 16 + item.depth * 24,
                 borderBottom: i < tree.length - 1 ? `1px solid ${tokens.border.default}` : "none",
                 background: isGranted ? tokens.accent.subtle : "transparent",
-                transition: "background 150ms",
               }}>
-                {/* Icon */}
-                {isGranted ? (
-                  <LockOpen size={15} style={{ color: tokens.accent.base, flexShrink: 0 }} />
-                ) : sensitive ? (
-                  <Lock size={15} style={{ color: tokens.status.locked, flexShrink: 0 }} />
-                ) : (
-                  <Folder size={15} style={{ color: tokens.text.tertiary, flexShrink: 0 }} />
-                )}
+                {isGranted ? <LockOpen size={15} style={{ color: tokens.accent.base }} />
+                  : item.sensitive ? <Lock size={15} style={{ color: tokens.status.locked }} />
+                  : <Folder size={15} style={{ color: tokens.text.tertiary }} />}
 
-                {/* Path */}
                 <span style={{
-                  flex: 1, fontFamily: "'Geist Mono', 'SF Mono', monospace", fontSize: 13,
-                  color: isGranted ? tokens.text.primary : sensitive ? tokens.text.tertiary : tokens.text.secondary,
+                  flex: 1, fontFamily: "'Geist Mono', monospace", fontSize: 13,
+                  color: isGranted ? tokens.text.primary : item.sensitive ? tokens.text.tertiary : tokens.text.secondary,
                 }}>
                   {item.path}
                 </span>
 
-                {/* Sensitive Warning */}
-                {sensitive && !isGranted && (
-                  <Badge color="red">
-                    <AlertTriangle size={10} /> blocked
-                  </Badge>
-                )}
+                {item.sensitive && !isGranted && <Badge color="red"><AlertTriangle size={10} /> blocked</Badge>}
 
-                {/* Permission Dropdown */}
                 {isGranted && grant && (
-                  <select
-                    value={grant.permission}
-                    onChange={e => updatePermission(item.path, e.target.value)}
-                    style={{
-                      padding: "3px 8px", borderRadius: 4, fontSize: 11, fontWeight: 500,
-                      background: tokens.bg.input, color: tokens.accent.base,
-                      border: `1px solid ${tokens.accent.border}`,
-                      outline: "none", cursor: "pointer", textTransform: "uppercase",
-                      letterSpacing: "0.04em",
-                    }}
-                  >
+                  <select value={grant.permission} onChange={e => updatePermission(item.path, e.target.value)} style={{
+                    padding: "3px 8px", borderRadius: 4, fontSize: 11, fontWeight: 500,
+                    background: tokens.bg.input, color: tokens.accent.base,
+                    border: `1px solid ${tokens.accent.border}`, outline: "none", cursor: "pointer",
+                    textTransform: "uppercase", letterSpacing: "0.04em",
+                  }}>
                     <option value="read">Read</option>
                     <option value="write">Read + Write</option>
                     <option value="approval">Approval Req</option>
                   </select>
                 )}
 
-                {/* Toggle Button */}
-                {!sensitive && (
+                {!item.sensitive && (
                   <button onClick={() => toggleGrant(item.path)} style={{
-                    padding: "4px 10px", borderRadius: 4, fontSize: 11,
-                    background: isGranted ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.04)",
+                    padding: "4px 10px", borderRadius: 4, fontSize: 11, fontWeight: 500,
+                    background: isGranted ? tokens.status.lockedSubtle : "rgba(255,255,255,0.04)",
                     color: isGranted ? tokens.status.locked : tokens.text.tertiary,
                     border: `1px solid ${isGranted ? "rgba(239,68,68,0.2)" : tokens.border.default}`,
-                    cursor: "pointer", transition: "all 150ms", fontWeight: 500,
+                    cursor: "pointer",
                   }}>
                     {isGranted ? "Revoke" : "Unlock"}
                   </button>
@@ -425,49 +634,38 @@ const FilesystemPage = () => {
           })}
         </div>
 
-        {/* Sidebar: Active Grants Summary */}
         <div>
-          <div style={{
-            border: `1px solid ${tokens.border.default}`, borderRadius: 8,
-            overflow: "hidden",
-          }}>
+          <div style={{ border: `1px solid ${tokens.border.default}`, borderRadius: 8, overflow: "hidden" }}>
             <div style={{
               padding: "10px 16px", background: tokens.bg.surface,
               borderBottom: `1px solid ${tokens.border.default}`,
-              fontSize: 11, fontWeight: 500, color: tokens.text.tertiary,
-              letterSpacing: "0.04em", textTransform: "uppercase",
+              fontSize: 11, fontWeight: 500, color: tokens.text.tertiary, letterSpacing: "0.04em", textTransform: "uppercase",
               display: "flex", justifyContent: "space-between",
             }}>
               <span>Active Grants</span>
               <Badge color="accent">{grants.length}</Badge>
             </div>
-
             {grants.map((g, i) => (
               <div key={g.id} style={{
                 padding: "10px 16px", display: "flex", alignItems: "center", gap: 8,
                 borderBottom: i < grants.length - 1 ? `1px solid ${tokens.border.default}` : "none",
               }}>
                 <LockOpen size={14} style={{ color: tokens.accent.base }} />
-                <span style={{ flex: 1, fontFamily: "'Geist Mono', 'SF Mono', monospace", fontSize: 12, color: tokens.text.primary }}>
+                <span style={{ flex: 1, fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.primary }}>
                   {g.path}
                 </span>
                 <Badge color={g.permission === "approval" ? "yellow" : g.permission === "write" ? "blue" : "accent"}>
-                  {g.permission === "approval" ? "approval" : g.permission}
+                  {g.permission}
                 </Badge>
               </div>
             ))}
           </div>
 
-          {/* Always Blocked */}
-          <div style={{
-            border: `1px solid ${tokens.border.default}`, borderRadius: 8,
-            overflow: "hidden", marginTop: 16,
-          }}>
+          <div style={{ border: `1px solid ${tokens.border.default}`, borderRadius: 8, overflow: "hidden", marginTop: 16 }}>
             <div style={{
               padding: "10px 16px", background: tokens.bg.surface,
               borderBottom: `1px solid ${tokens.border.default}`,
-              fontSize: 11, fontWeight: 500, color: tokens.text.tertiary,
-              letterSpacing: "0.04em", textTransform: "uppercase",
+              fontSize: 11, fontWeight: 500, color: tokens.text.tertiary, letterSpacing: "0.04em", textTransform: "uppercase",
             }}>
               Always Blocked
             </div>
@@ -477,7 +675,7 @@ const FilesystemPage = () => {
                 borderBottom: i < blocked.length - 1 ? `1px solid ${tokens.border.default}` : "none",
               }}>
                 <Lock size={14} style={{ color: tokens.status.locked }} />
-                <span style={{ flex: 1, fontFamily: "'Geist Mono', 'SF Mono', monospace", fontSize: 12, color: tokens.text.tertiary }}>
+                <span style={{ flex: 1, fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.tertiary }}>
                   {b.path}
                 </span>
                 <span style={{ fontSize: 11, color: tokens.text.tertiary }}>{b.reason}</span>
@@ -490,13 +688,12 @@ const FilesystemPage = () => {
   );
 };
 
-// ─── Sessions Page ───
 const SessionsPage = () => {
   const sessions = [
-    { id: "bk_7kx9m2", agent: "Claude via MCP", purpose: "Refund processing", secrets: 2, fs: 3, status: "active", created: "12 min ago", expires: "48 min" },
-    { id: "bk_p3n8w1", agent: "Custom GPT", purpose: "Code review", secrets: 1, fs: 2, status: "active", created: "2 hours ago", expires: "22 min" },
-    { id: "bk_r5t2q8", agent: "OpenClaw Worker", purpose: "Deploy pipeline", secrets: 3, fs: 1, status: "expired", created: "Yesterday", expires: "\u2014" },
-    { id: "bk_m1k4j6", agent: "Claude Code", purpose: "Feature development", secrets: 1, fs: 4, status: "revoked", created: "2 days ago", expires: "\u2014" },
+    { id: "bk_7kx9m2", agent: "Claude via MCP", purpose: "Refund processing", secrets: 2, fs: 3, status: "active", expires: "48 min" },
+    { id: "bk_p3n8w1", agent: "Custom GPT", purpose: "Code review", secrets: 1, fs: 2, status: "active", expires: "22 min" },
+    { id: "bk_r5t2q8", agent: "OpenClaw Worker", purpose: "Deploy pipeline", secrets: 3, fs: 1, status: "expired", expires: "—" },
+    { id: "bk_m1k4j6", agent: "Claude Code", purpose: "Feature development", secrets: 1, fs: 4, status: "revoked", expires: "—" },
   ];
 
   return (
@@ -505,7 +702,7 @@ const SessionsPage = () => {
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 600, color: tokens.text.primary, margin: 0 }}>Sessions</h1>
           <p style={{ fontSize: 14, color: tokens.text.secondary, margin: "6px 0 0" }}>
-            Active and past agent sessions. Each session scopes which secrets and folders an agent can access.
+            Active and past agent sessions with scoped access.
           </p>
         </div>
         <button style={{
@@ -522,8 +719,7 @@ const SessionsPage = () => {
           display: "grid", gridTemplateColumns: "120px 140px 1fr 80px 80px 80px 80px",
           padding: "10px 16px", background: tokens.bg.surface,
           borderBottom: `1px solid ${tokens.border.default}`,
-          fontSize: 11, fontWeight: 500, color: tokens.text.tertiary,
-          letterSpacing: "0.04em", textTransform: "uppercase",
+          fontSize: 11, fontWeight: 500, color: tokens.text.tertiary, letterSpacing: "0.04em", textTransform: "uppercase",
         }}>
           <span>Session</span><span>Agent</span><span>Purpose</span>
           <span>Secrets</span><span>Folders</span><span>Status</span><span>TTL</span>
@@ -534,24 +730,16 @@ const SessionsPage = () => {
             display: "grid", gridTemplateColumns: "120px 140px 1fr 80px 80px 80px 80px",
             padding: "12px 16px", alignItems: "center",
             borderBottom: i < sessions.length - 1 ? `1px solid ${tokens.border.default}` : "none",
-            transition: "background 150ms", cursor: "pointer",
-          }}
-            onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = tokens.bg.elevated}
-            onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = "transparent"}
-          >
-            <span style={{ fontFamily: "'Geist Mono', 'SF Mono', monospace", fontSize: 12, color: tokens.text.secondary }}>
-              {s.id}
-            </span>
+          }}>
+            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.secondary }}>{s.id}</span>
             <span style={{ fontSize: 13, color: tokens.text.primary }}>{s.agent}</span>
             <span style={{ fontSize: 13, color: tokens.text.secondary }}>{s.purpose}</span>
             <span style={{ fontSize: 13, color: tokens.text.secondary }}>{s.secrets}</span>
             <span style={{ fontSize: 13, color: tokens.text.secondary }}>{s.fs}</span>
             <Badge color={s.status === "active" ? "accent" : s.status === "revoked" ? "red" : "gray"}>
-              {s.status === "active" && "\u25CF "}{s.status}
+              {s.status === "active" && "● "}{s.status}
             </Badge>
-            <span style={{ fontSize: 12, color: s.expires === "\u2014" ? tokens.text.tertiary : tokens.text.secondary }}>
-              {s.expires}
-            </span>
+            <span style={{ fontSize: 12, color: tokens.text.secondary }}>{s.expires}</span>
           </div>
         ))}
       </div>
@@ -559,15 +747,12 @@ const SessionsPage = () => {
   );
 };
 
-// ─── Audit Page ───
 const AuditPage = () => {
   const entries = [
-    { time: "14:32:05", session: "bk_7kx9m2", action: "API Request", target: "POST /v1/charges", secret: "STRIPE_PROD_KEY", status: "allowed", detail: "Charge $20.00 USD" },
-    { time: "14:31:58", session: "bk_7kx9m2", action: "File Read", target: "/project/src/handler.ts", secret: "\u2014", status: "allowed", detail: "2.4 KB" },
-    { time: "14:31:42", session: "bk_p3n8w1", action: "API Request", target: "GET /repos/acme/app", secret: "GITHUB_PAT", status: "allowed", detail: "Repo metadata" },
-    { time: "14:31:30", session: "bk_7kx9m2", action: "File Read", target: "/.ssh/id_rsa", secret: "\u2014", status: "blocked", detail: "No filesystem grant" },
-    { time: "14:30:15", session: "bk_7kx9m2", action: "API Request", target: "GET /v1/account", secret: "STRIPE_PROD_KEY", status: "blocked", detail: "Endpoint not in allowlist" },
-    { time: "14:29:50", session: "bk_p3n8w1", action: "File Write", target: "/project/output/review.md", secret: "\u2014", status: "allowed", detail: "1.1 KB written" },
+    { time: "14:32:05", session: "bk_7kx9m2", action: "API Request", target: "POST /v1/charges", secret: "STRIPE_PROD_KEY", status: "allowed", detail: "Charge $20.00" },
+    { time: "14:31:58", session: "bk_7kx9m2", action: "File Read", target: "/project/src/handler.ts", secret: "—", status: "allowed", detail: "2.4 KB" },
+    { time: "14:31:30", session: "bk_7kx9m2", action: "File Read", target: "/.ssh/id_rsa", secret: "—", status: "blocked", detail: "No grant" },
+    { time: "14:30:15", session: "bk_7kx9m2", action: "API Request", target: "GET /v1/account", secret: "STRIPE_PROD_KEY", status: "blocked", detail: "Not in allowlist" },
   ];
 
   return (
@@ -575,7 +760,7 @@ const AuditPage = () => {
       <div style={{ marginBottom: 32 }}>
         <h1 style={{ fontSize: 24, fontWeight: 600, color: tokens.text.primary, margin: 0 }}>Audit Log</h1>
         <p style={{ fontSize: 14, color: tokens.text.secondary, margin: "6px 0 0" }}>
-          Every action your agents take, logged immutably. API calls, file operations, and policy enforcements.
+          Immutable log of all agent actions.
         </p>
       </div>
 
@@ -584,8 +769,7 @@ const AuditPage = () => {
           display: "grid", gridTemplateColumns: "80px 100px 100px 200px 140px 80px 1fr",
           padding: "10px 16px", background: tokens.bg.surface,
           borderBottom: `1px solid ${tokens.border.default}`,
-          fontSize: 11, fontWeight: 500, color: tokens.text.tertiary,
-          letterSpacing: "0.04em", textTransform: "uppercase",
+          fontSize: 11, fontWeight: 500, color: tokens.text.tertiary, letterSpacing: "0.04em", textTransform: "uppercase",
         }}>
           <span>Time</span><span>Session</span><span>Action</span><span>Target</span>
           <span>Secret</span><span>Status</span><span>Detail</span>
@@ -596,24 +780,14 @@ const AuditPage = () => {
             display: "grid", gridTemplateColumns: "80px 100px 100px 200px 140px 80px 1fr",
             padding: "10px 16px", alignItems: "center",
             borderBottom: i < entries.length - 1 ? `1px solid ${tokens.border.default}` : "none",
-            transition: "background 150ms",
-          }}
-            onMouseEnter={ev => (ev.currentTarget as HTMLDivElement).style.background = tokens.bg.elevated}
-            onMouseLeave={ev => (ev.currentTarget as HTMLDivElement).style.background = "transparent"}
-          >
-            <span style={{ fontFamily: "'Geist Mono', 'SF Mono', monospace", fontSize: 12, color: tokens.text.tertiary }}>
-              {e.time}
-            </span>
-            <span style={{ fontFamily: "'Geist Mono', 'SF Mono', monospace", fontSize: 12, color: tokens.text.secondary }}>
-              {e.session}
-            </span>
+          }}>
+            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.tertiary }}>{e.time}</span>
+            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.secondary }}>{e.session}</span>
             <Badge color={e.action.includes("File") ? "blue" : "gray"}>{e.action}</Badge>
-            <span style={{ fontFamily: "'Geist Mono', 'SF Mono', monospace", fontSize: 12, color: tokens.text.primary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.primary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {e.target}
             </span>
-            <span style={{ fontFamily: "'Geist Mono', 'SF Mono', monospace", fontSize: 12, color: tokens.text.secondary }}>
-              {e.secret}
-            </span>
+            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.secondary }}>{e.secret}</span>
             <Badge color={e.status === "allowed" ? "accent" : "red"}>{e.status}</Badge>
             <span style={{ fontSize: 12, color: tokens.text.secondary }}>{e.detail}</span>
           </div>
@@ -623,13 +797,49 @@ const AuditPage = () => {
   );
 };
 
-// ─── Main Dashboard ───
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN DASHBOARD - Mode Toggle
+// ═══════════════════════════════════════════════════════════════════════════
+
 type PageId = "secrets" | "filesystem" | "sessions" | "audit";
 
 export default function BlindKeyDashboard() {
+  const [expertMode, setExpertMode] = useState(false);
   const [activePage, setActivePage] = useState<PageId>("secrets");
   const [sidebarHover, setSidebarHover] = useState<string | null>(null);
 
+  // Shared state between simple and expert modes
+  const [secrets, setSecrets] = useState<SecretEntry[]>([
+    { id: 1, name: "STRIPE_PROD_KEY", value: "sk_live_51Hx...a8Ks", service: "Stripe", domains: ["api.stripe.com"], ttl: 30, visible: false, created: "2 days ago" },
+    { id: 2, name: "GITHUB_PAT", value: "ghp_xK29...mNp4", service: "GitHub", domains: ["api.github.com"], ttl: 60, visible: false, created: "5 days ago" },
+    { id: 3, name: "OPENAI_API_KEY", value: "sk-proj-9x...wR2f", service: "OpenAI", domains: ["api.openai.com"], ttl: 30, visible: false, created: "1 week ago" },
+  ]);
+
+  const [grants, setGrants] = useState<FsGrant[]>([
+    { id: 1, path: "/project/src", permission: "read", recursive: true, approval: false },
+    { id: 2, path: "/project/output", permission: "write", recursive: true, approval: false },
+  ]);
+
+  // Simple mode
+  if (!expertMode) {
+    return (
+      <div style={{
+        minHeight: "100vh", background: tokens.bg.root,
+        fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, sans-serif",
+        color: tokens.text.primary,
+      }}>
+        <SimpleDashboard
+          secrets={secrets}
+          setSecrets={setSecrets}
+          grants={grants}
+          setGrants={setGrants}
+          onSwitchToExpert={() => setExpertMode(true)}
+        />
+      </div>
+    );
+  }
+
+  // Expert mode
   const nav: { id: PageId; label: string; icon: typeof Key }[] = [
     { id: "secrets", label: "Secrets", icon: Key },
     { id: "filesystem", label: "Filesystem", icon: FolderOpen },
@@ -638,8 +848,8 @@ export default function BlindKeyDashboard() {
   ];
 
   const pages: Record<PageId, React.ReactNode> = {
-    secrets: <SecretsPage />,
-    filesystem: <FilesystemPage />,
+    secrets: <SecretsPage secrets={secrets} setSecrets={setSecrets} />,
+    filesystem: <FilesystemPage grants={grants} setGrants={setGrants} />,
     sessions: <SessionsPage />,
     audit: <AuditPage />,
   };
@@ -650,10 +860,10 @@ export default function BlindKeyDashboard() {
       fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, sans-serif",
       color: tokens.text.primary,
     }}>
-      {/* ─── Sidebar ─── */}
+      {/* Sidebar */}
       <div style={{
         width: 240, borderRight: `1px solid ${tokens.border.default}`,
-        display: "flex", flexDirection: "column", padding: "0",
+        display: "flex", flexDirection: "column",
         position: "fixed", top: 0, left: 0, bottom: 0,
         background: tokens.bg.root, zIndex: 10,
       }}>
@@ -670,6 +880,7 @@ export default function BlindKeyDashboard() {
             <Shield size={16} style={{ color: tokens.text.inverse }} />
           </div>
           <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>BlindKey</span>
+          <Badge color="yellow">Expert</Badge>
         </div>
 
         {/* Nav */}
@@ -689,8 +900,7 @@ export default function BlindKeyDashboard() {
                   background: active ? "rgba(255,255,255,0.06)" : sidebarHover === item.id ? "rgba(255,255,255,0.03)" : "transparent",
                   border: "none", cursor: "pointer",
                   color: active ? tokens.text.primary : tokens.text.secondary,
-                  fontSize: 13, fontWeight: active ? 500 : 400,
-                  transition: "all 150ms", textAlign: "left",
+                  fontSize: 13, fontWeight: active ? 500 : 400, textAlign: "left",
                   position: "relative",
                 }}
               >
@@ -700,36 +910,24 @@ export default function BlindKeyDashboard() {
                 }} />}
                 <Icon size={17} style={{ opacity: active ? 1 : 0.5 }} />
                 {item.label}
-                {item.id === "audit" && (
-                  <span style={{
-                    marginLeft: "auto", fontSize: 10, padding: "1px 6px",
-                    borderRadius: 9999, background: "rgba(255,255,255,0.06)",
-                    color: tokens.text.tertiary,
-                  }}>6</span>
-                )}
               </button>
             );
           })}
         </nav>
 
-        {/* Bottom */}
-        <div style={{ padding: "12px 20px", borderTop: `1px solid ${tokens.border.default}` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{
-              width: 28, height: 28, borderRadius: 9999,
-              background: "rgba(255,255,255,0.08)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 12, fontWeight: 500, color: tokens.text.secondary,
-            }}>S</div>
-            <div>
-              <div style={{ fontSize: 13, color: tokens.text.primary }}>Sam</div>
-              <div style={{ fontSize: 11, color: tokens.text.tertiary }}>Pro Plan</div>
-            </div>
-          </div>
+        {/* Switch to Simple */}
+        <div style={{ padding: "12px 16px", borderTop: `1px solid ${tokens.border.default}` }}>
+          <button onClick={() => setExpertMode(false)} style={{
+            width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            padding: "8px", background: "none", border: `1px solid ${tokens.border.default}`,
+            borderRadius: 6, color: tokens.text.secondary, fontSize: 12, cursor: "pointer",
+          }}>
+            Switch to Simple Mode
+          </button>
         </div>
       </div>
 
-      {/* ─── Main Content ─── */}
+      {/* Main Content */}
       <div style={{ marginLeft: 240, flex: 1, padding: "32px 40px", maxWidth: 1200 }}>
         {pages[activePage]}
       </div>
