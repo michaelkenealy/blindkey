@@ -1,8 +1,9 @@
 import { createApiServer } from './server.js';
+import { parsePort, requireEnv, requireStrongSecret } from '@blindkey/core';
 
-const port = parseInt(process.env.API_PORT ?? '3200', 10);
-const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://agentvault:agentvault_dev@localhost:5432/agentvault';
-const jwtSecret = process.env.JWT_SECRET ?? 'dev-secret-change-in-production';
+const port = parsePort('API_PORT', 3200);
+const databaseUrl = requireEnv('DATABASE_URL');
+const jwtSecret = requireStrongSecret('JWT_SECRET');
 
 async function main() {
   const { app } = await createApiServer({ port, databaseUrl, jwtSecret });

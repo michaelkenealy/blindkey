@@ -6,3 +6,4 @@ export * from './vault-backend.js';
 export * from './fs-policy.js';
 export * from './safe-regex.js';
 export * from './audit-integrity.js';
+export * from './env.js';

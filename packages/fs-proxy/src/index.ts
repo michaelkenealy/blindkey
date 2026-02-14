@@ -1,16 +1,17 @@
 import { createFsProxyServer } from './server.js';
+import { parsePort, requireEnv } from '@blindkey/core';
 
-const PORT = parseInt(process.env.FS_PROXY_PORT ?? '3300', 10);
-const DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://agentvault:agentvault_dev@localhost:5432/agentvault';
+const port = parsePort('FS_PROXY_PORT', 3300);
+const databaseUrl = requireEnv('DATABASE_URL');
 
 async function main() {
   const { app } = await createFsProxyServer({
-    port: PORT,
-    databaseUrl: DATABASE_URL,
+    port,
+    databaseUrl,
   });
 
-  await app.listen({ port: PORT, host: '0.0.0.0' });
-  app.log.info(`AgentVault FS Proxy listening on port ${PORT}`);
+  await app.listen({ port, host: '0.0.0.0' });
+  app.log.info(`AgentVault FS Proxy listening on port ${port}`);
 }
 
 main().catch((err) => {
