@@ -3,6 +3,10 @@ import type { Redis } from 'ioredis';
 import type { AgentSession, ProxyRequest, PolicySet, RateLimitRule } from '@blindkey/core';
 import { evaluatePolicy, RateLimitError, PolicyDeniedError } from '@blindkey/core';
 
+// Environment variable to control fail-closed behavior
+// Set POLICY_FAIL_OPEN=true to allow sessions without policies (NOT RECOMMENDED)
+const FAIL_OPEN = process.env.POLICY_FAIL_OPEN === 'true';
+
 export class PolicyMiddleware {
   constructor(
     private db: Pool,
@@ -14,7 +18,24 @@ export class PolicyMiddleware {
     blocking_policy: string | null;
   }> {
     if (!session.policy_set_id) {
-      return { checked: [], blocking_policy: null };
+      // SECURITY: Fail-closed by default
+      // Sessions without an assigned policy are blocked unless explicitly configured otherwise
+      if (!FAIL_OPEN) {
+        console.warn(
+          `[SECURITY] Session ${session.id} has no policy assigned. ` +
+          `Blocking request (fail-closed). Set POLICY_FAIL_OPEN=true to allow.`
+        );
+        throw new PolicyDeniedError(
+          'no_policy',
+          'Session has no policy assigned. All sessions require an explicit policy for security.'
+        );
+      }
+      // Fail-open mode (not recommended)
+      console.warn(
+        `[SECURITY WARNING] Session ${session.id} has no policy but POLICY_FAIL_OPEN=true. ` +
+        `Request allowed without policy enforcement.`
+      );
+      return { checked: ['no_policy_warn'], blocking_policy: null };
     }
 
     const result = await this.db.query(
@@ -23,7 +44,16 @@ export class PolicyMiddleware {
     );
 
     if (result.rows.length === 0) {
-      return { checked: [], blocking_policy: null };
+      // Policy was deleted but session still references it
+      // SECURITY: Fail-closed - treat as invalid configuration
+      console.error(
+        `[SECURITY] Session ${session.id} references non-existent policy ${session.policy_set_id}. ` +
+        `Blocking request.`
+      );
+      throw new PolicyDeniedError(
+        'policy_not_found',
+        'Referenced policy no longer exists. Session must be updated or recreated.'
+      );
     }
 
     const policySet = result.rows[0] as PolicySet;

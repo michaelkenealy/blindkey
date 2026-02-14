@@ -10,6 +10,7 @@ import type {
   FsPermission,
   FsOperation,
 } from './types.js';
+import { safeRegexTest, SafeRegexError } from './safe-regex.js';
 
 export interface FsGrantCheckResult {
   granted: boolean;
@@ -150,12 +151,22 @@ export function evaluateFsPolicy(
           request.content
         ) {
           for (const check of rule.block_if_contains) {
-            if (new RegExp(check.pattern).test(request.content)) {
-              return {
-                allowed: false,
-                blocking_rule: 'fs_content_scan',
-                message: check.message,
-              };
+            try {
+              // Use safe regex evaluation to prevent ReDoS attacks
+              if (safeRegexTest(check.pattern, request.content)) {
+                return {
+                  allowed: false,
+                  blocking_rule: 'fs_content_scan',
+                  message: check.message,
+                };
+              }
+            } catch (e) {
+              if (e instanceof SafeRegexError) {
+                // Unsafe pattern - log and skip (fail-open for content scan)
+                console.warn(`[SECURITY] Blocked unsafe regex pattern in fs_content_scan: ${e.message}`);
+                continue;
+              }
+              throw e;
             }
           }
         }
