@@ -2,6 +2,7 @@
   "name": "blindkey",
   "version": "0.1.0",
   "private": true,
+  "description": "Secure credential management for AI agents",
   "packageManager": "npm@10.9.2",
   "workspaces": [
     "packages/*"
@@ -10,10 +11,22 @@
     "build": "turbo build",
     "dev": "turbo dev",
     "lint": "turbo lint",
-    "clean": "turbo clean"
+    "clean": "turbo clean",
+    "publish:dry": "npm run build && npm publish --workspace=@blindkey/core --dry-run && npm publish --workspace=@blindkey/local-vault --dry-run && npm publish --workspace=@blindkey/cli --dry-run",
+    "publish:all": "npm run build && npm publish --workspace=@blindkey/core --access public && npm publish --workspace=@blindkey/local-vault --access public && npm publish --workspace=@blindkey/cli --access public"
   },
   "devDependencies": {
     "turbo": "^2.3.0",
     "typescript": "^5.7.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michaelkenealy/blindkey.git"
+  },
+  "author": "Michael Kenealy",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/michaelkenealy/blindkey/issues"
+  },
+  "homepage": "https://github.com/michaelkenealy/blindkey#readme"
 }

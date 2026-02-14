@@ -1,19 +1,49 @@
 {
   "name": "@blindkey/cli",
   "version": "0.1.0",
-  "private": true,
+  "description": "Secure credential management CLI for AI agents - blind injection, domain allowlisting, audit logging",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "bk": "dist/index.js"
+    "bk": "dist/index.js",
+    "blindkey": "dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "credentials",
+    "secrets",
+    "vault",
+    "security",
+    "ai-agents",
+    "mcp",
+    "claude",
+    "encryption",
+    "api-keys"
+  ],
+  "author": "Michael Kenealy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michaelkenealy/blindkey.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/michaelkenealy/blindkey#readme",
+  "bugs": {
+    "url": "https://github.com/michaelkenealy/blindkey/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
-    "@blindkey/core": "*",
-    "@blindkey/local-vault": "*",
+    "@blindkey/core": "0.1.0",
+    "@blindkey/local-vault": "0.1.0",
     "commander": "^13.0.0"
   },
   "devDependencies": {
