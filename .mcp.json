@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "blindkey": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["c:/Users/Owner/Code/Blindkey/packages/openclaw-skill/dist/index.js"],
+      "env": {}
+    }
+  }
+}

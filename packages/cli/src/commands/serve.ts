@@ -1,8 +1,7 @@
 import type { Command } from 'commander';
 import type { LocalVault } from '@blindkey/local-vault';
 import { spawn } from 'node:child_process';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 export function registerServeCommand(program: Command, _getVault: () => Promise<LocalVault>) {
   program
@@ -10,9 +9,18 @@ export function registerServeCommand(program: Command, _getVault: () => Promise<
     .description('Start the BlindKey MCP server (stdio transport)')
     .option('-p, --port <port>', 'Port for HTTP proxy (not yet implemented)')
     .action(async () => {
-      // Resolve the openclaw-skill entry point relative to this CLI package
-      const __dirname = dirname(fileURLToPath(import.meta.url));
-      const skillEntry = resolve(__dirname, '../../openclaw-skill/dist/index.js');
+      // Resolve the openclaw-skill entry point using Node's module resolution
+      // This works whether installed globally, locally, or in a monorepo
+      const require = createRequire(import.meta.url);
+      let skillEntry: string;
+
+      try {
+        skillEntry = require.resolve('@blindkey/openclaw-skill');
+      } catch {
+        console.error('\x1b[31m✕\x1b[0m Could not find @blindkey/openclaw-skill package.');
+        console.error('  Make sure it is installed: npm install @blindkey/openclaw-skill');
+        process.exit(1);
+      }
 
       console.error('Starting BlindKey MCP server on stdio...');
       console.error(`Entry: ${skillEntry}`);
