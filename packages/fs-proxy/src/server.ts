@@ -32,6 +32,17 @@ function isCorsOriginAllowed(origin?: string): boolean {
   return CORS_ALLOWED_ORIGINS.includes(origin);
 }
 
+const DEFAULT_BODY_LIMIT_BYTES = 1_048_576; // 1MB
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
 declare module 'fastify' {
   interface FastifyRequest {
     session?: AgentSession;
@@ -44,7 +55,12 @@ export interface FsProxyServerConfig {
 }
 
 export async function createFsProxyServer(config: FsProxyServerConfig) {
+  const bodyLimit = parsePositiveIntEnv('FS_PROXY_BODY_LIMIT_BYTES', DEFAULT_BODY_LIMIT_BYTES);
+  const requestTimeout = parsePositiveIntEnv('FS_PROXY_REQUEST_TIMEOUT_MS', DEFAULT_REQUEST_TIMEOUT_MS);
+
   const app = Fastify({
+    bodyLimit,
+    requestTimeout,
     logger: {
       level: 'info',
       transport: {
@@ -306,3 +322,4 @@ export async function createFsProxyServer(config: FsProxyServerConfig) {
 
   return { app, db };
 }
+
