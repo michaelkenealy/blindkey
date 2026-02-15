@@ -7,3 +7,4 @@ export * from './fs-policy.js';
 export * from './safe-regex.js';
 export * from './audit-integrity.js';
 export * from './env.js';
+export * from './policy-validation.js';

@@ -8,7 +8,6 @@ import type {
   RegexBlocklistRule,
 } from './types.js';
 import { PolicyDeniedError } from './errors.js';
-import { safeRegexTest, SafeRegexError } from './safe-regex.js';
 
 export interface PolicyEvalResult {
   allowed: boolean;
@@ -68,19 +67,7 @@ function evaluatePayloadCap(rule: PayloadCapRule, request: ProxyRequest): boolea
 
 function evaluateRegexBlocklist(rule: RegexBlocklistRule, request: ProxyRequest): boolean {
   const bodyStr = JSON.stringify(request.body ?? '');
-  // Use safe regex evaluation to prevent ReDoS attacks
-  return !rule.patterns.some((pattern) => {
-    try {
-      return safeRegexTest(pattern, bodyStr);
-    } catch (e) {
-      if (e instanceof SafeRegexError) {
-        // Unsafe pattern - treat as non-matching and log
-        console.warn(`[SECURITY] Blocked unsafe regex pattern in policy: ${e.message}`);
-        return false;
-      }
-      throw e;
-    }
-  });
+  return !rule.patterns.some((pattern) => new RegExp(pattern).test(bodyStr));
 }
 
 export function evaluatePolicy(policySet: PolicySet, request: ProxyRequest): PolicyEvalResult {
@@ -112,7 +99,12 @@ export function evaluatePolicy(policySet: PolicySet, request: ProxyRequest): Pol
         allowed = true;
         break;
       default:
-        allowed = true;
+        return {
+          allowed: false,
+          checked,
+          blocking_policy: 'unknown_policy_rule',
+          message: `Blocked by unknown policy rule type: ${(rule as { type?: string }).type ?? 'unknown'}`,
+        };
     }
 
     if (!allowed) {

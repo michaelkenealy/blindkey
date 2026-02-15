@@ -1,6 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
-import { ValidationError, NotFoundError, type PolicySetCreateInput } from '@blindkey/core';
+import {
+  ValidationError,
+  NotFoundError,
+  validatePolicyRules,
+} from '@blindkey/core';
 
 interface CreatePolicyBody {
   name: string;
@@ -13,14 +17,16 @@ export function registerPoliciesRoutes(app: FastifyInstance, db: Pool) {
     const userId = request.userId!;
     const { name, rules } = request.body;
 
-    if (!name || !rules || !Array.isArray(rules)) {
+    if (!name || !Array.isArray(rules)) {
       throw new ValidationError('name and rules (array) are required');
     }
+
+    const normalizedRules = validatePolicyRules(rules);
 
     const result = await db.query(
       `INSERT INTO policy_sets (user_id, name, rules) VALUES ($1, $2, $3)
        RETURNING id, name, rules, created_at`,
-      [userId, name, JSON.stringify(rules)]
+      [userId, name, JSON.stringify(normalizedRules)]
     );
 
     return reply.code(201).send(result.rows[0]);
