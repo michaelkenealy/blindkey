@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes, createHash, createHmac } from 'node:crypto';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
@@ -10,6 +10,21 @@ function getMasterKey(): Buffer {
     throw new Error('VAULT_MASTER_KEY must be a 64-character hex string (32 bytes)');
   }
   return Buffer.from(hex, 'hex');
+}
+
+function getTokenHashPepper(): string | null {
+  const pepper = process.env.TOKEN_HASH_PEPPER;
+  if (!pepper) return null;
+  const trimmed = pepper.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function hashTokenLegacy(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function hashTokenV2(token: string, pepper: string): string {
+  return createHmac('sha256', pepper).update(token).digest('hex');
 }
 
 export interface EncryptedData {
@@ -50,8 +65,33 @@ export function generateVaultRef(service: string): string {
   return `bk://${service}-${id}`;
 }
 
+/**
+ * Primary token hash format for new sessions.
+ * - v2:<hmac_sha256(token, TOKEN_HASH_PEPPER)> when TOKEN_HASH_PEPPER is set
+ * - v1:<sha256(token)> fallback for migration safety
+ */
 export function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
+  const pepper = getTokenHashPepper();
+  if (pepper) {
+    return `v2:${hashTokenV2(token, pepper)}`;
+  }
+  return `v1:${hashTokenLegacy(token)}`;
+}
+
+/**
+ * Candidate token hashes accepted during auth for backward compatibility.
+ * Includes legacy unversioned sha256 hashes used by older BlindKey versions.
+ */
+export function getTokenHashCandidates(token: string): string[] {
+  const legacy = hashTokenLegacy(token);
+  const candidates = new Set<string>([legacy, `v1:${legacy}`]);
+
+  const pepper = getTokenHashPepper();
+  if (pepper) {
+    candidates.add(`v2:${hashTokenV2(token, pepper)}`);
+  }
+
+  return Array.from(candidates);
 }
 
 export function generateSessionToken(): string {
