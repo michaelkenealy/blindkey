@@ -15,6 +15,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { createLocalVault, type LocalVault } from '@blindkey/local-vault';
+import type { FsPolicyRule } from '@blindkey/core';
 
 const LOCAL_TOKEN = 'blindkey-local-dev';
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3200);
@@ -232,6 +233,51 @@ async function main() {
     vault.audit.log({ action: 'grant_revoked', path: grant.path, granted: true });
 
     return reply.code(204).send();
+  });
+
+  // ── Audit Log ──
+
+  app.get<{ Querystring: { limit?: string } }>('/v1/audit', async (request, reply) => {
+    const limit = parseInt(request.query.limit ?? '100', 10);
+    const entries = vault.audit.recent(limit);
+    return reply.send({ entries });
+  });
+
+  app.get('/v1/audit/count', async (_request, reply) => {
+    const count = vault.audit.count();
+    return reply.send({ count });
+  });
+
+  // ── Content Policies ──
+
+  app.get('/v1/policies', async (_request, reply) => {
+    const policies = vault.policies.getAll();
+    return reply.send({ policies });
+  });
+
+  app.post('/v1/policies', async (request, reply) => {
+    const rule = request.body as FsPolicyRule;
+    const policy = vault.policies.add(rule);
+    return reply.code(201).send({ policy });
+  });
+
+  app.delete<{ Params: { id: string } }>('/v1/policies/:id', async (request, reply) => {
+    const removed = vault.policies.remove(request.params.id);
+    return reply.send({ success: removed });
+  });
+
+  app.patch<{ Params: { id: string }; Body: { enabled: boolean } }>(
+    '/v1/policies/:id',
+    async (request, reply) => {
+      vault.policies.toggle(request.params.id, request.body.enabled);
+      return reply.send({ success: true });
+    },
+  );
+
+  // ── Config (mode detection) ──
+
+  app.get('/v1/config', async (_request, reply) => {
+    return reply.send({ mode: 'local', version: '0.1.0' });
   });
 
   // ── Start ──

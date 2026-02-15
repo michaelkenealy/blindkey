@@ -1,17 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, createContext, useContext } from "react";
 import { Lock, LockOpen, Plus, X, Copy, Shield, FolderOpen, Folder, Key, Activity, AlertTriangle, Check, RefreshCw, ChevronRight, Zap, LogOut, Loader, FileWarning, Download, Filter, Eye, EyeOff, Trash2 } from "lucide-react";
-import {
-  isLoggedIn, clearToken, login, register, verifyTotp,
-  fetchSecrets, createSecret, deleteSecret, rotateSecret,
-  setupTotp, confirmTotp, disableTotp, getTotpStatus,
-  fetchGrants, createGrant, deleteGrant,
-  type SecretMetadata, type GrantMetadata, ApiError,
-} from "./api";
-import {
-  fetchAuditLog, fetchAuditCount,
-  fetchPolicies, addPolicy, removePolicy, togglePolicy,
-  type AuditRow, type PolicyRow,
-} from "./api/vault-client";
+import { getClientSync, getMode } from "./api/index";
+import type { BlindKeyClient, SecretItem, GrantItem, AuditItem, PolicyItem } from "./api/types";
+import { ApiError } from "./api";
 
 // ─── Service Presets ───
 const SERVICE_PRESETS = [
@@ -42,6 +33,10 @@ const tokens = {
   },
 };
 
+// ─── Client Context ───
+const ClientContext = createContext<BlindKeyClient>(null!);
+function useClient(): BlindKeyClient { return useContext(ClientContext); }
+
 // ─── Badge Component ───
 type BadgeColor = "accent" | "red" | "yellow" | "blue" | "gray";
 
@@ -65,7 +60,7 @@ const Badge = ({ children, color = "accent" }: { children: React.ReactNode; colo
 };
 
 // ─── Shared State Types ───
-// SecretEntry is now SecretMetadata from the API (see api.ts).
+// SecretEntry is now SecretItem from the API (see api.ts).
 // No plaintext value is ever stored client-side after creation.
 
 interface FsGrant {
@@ -82,7 +77,7 @@ interface FsGrant {
 // ═══════════════════════════════════════════════════════════════════════════
 
 interface SimpleDashboardProps {
-  secrets: SecretMetadata[];
+  secrets: SecretItem[];
   refreshSecrets: () => Promise<void>;
   loading: boolean;
   grants: FsGrant[];
@@ -92,6 +87,7 @@ interface SimpleDashboardProps {
 }
 
 const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, onSwitchToExpert, onLogout }: SimpleDashboardProps) => {
+  const client = useClient();
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
   const [newPath, setNewPath] = useState("");
@@ -113,7 +109,7 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
     setSaving(true);
     setError(null);
     try {
-      await createSecret({
+      await client.createSecret({
         name: newKey.toUpperCase(),
         service: selectedService.name,
         secret_type: "api_key",
@@ -132,7 +128,7 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
   const removeSecret = async (id: string) => {
     setError(null);
     try {
-      await deleteSecret(id);
+      await client.deleteSecret(id);
       await refreshSecrets();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to delete key");
@@ -150,7 +146,7 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
     }
     setError(null);
     try {
-      const grant = await createGrant({ path, permissions: ["read"], recursive: true });
+      const grant = await client.createGrant({ path, permissions: ["read"], recursive: true });
       setGrants([...grants, { id: grant.id, path: grant.path, permission: "read", recursive: grant.recursive, approval: grant.requires_approval }]);
       setNewPath("");
     } catch (e) {
@@ -182,7 +178,7 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
   const removeFolder = async (id: string) => {
     setError(null);
     try {
-      await deleteGrant(id);
+      await client.deleteGrant(id);
       setGrants(grants.filter(g => g.id !== id));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to revoke folder");
@@ -494,16 +490,18 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
         </p>
       </div>
 
-      {/* Logout */}
-      <div style={{ textAlign: "center", paddingTop: 24 }}>
-        <button onClick={onLogout} style={{
-          display: "inline-flex", alignItems: "center", gap: 6,
-          padding: "8px 16px", background: "none", border: "none",
-          color: tokens.text.tertiary, fontSize: 12, cursor: "pointer",
-        }}>
-          <LogOut size={14} /> Log out
-        </button>
-      </div>
+      {/* Logout (Docker mode only) */}
+      {client.mode === 'docker' && (
+        <div style={{ textAlign: "center", paddingTop: 24 }}>
+          <button onClick={onLogout} style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "8px 16px", background: "none", border: "none",
+            color: tokens.text.tertiary, fontSize: 12, cursor: "pointer",
+          }}>
+            <LogOut size={14} /> Log out
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -513,12 +511,13 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
 // ═══════════════════════════════════════════════════════════════════════════
 
 interface SecretsPageProps {
-  secrets: SecretMetadata[];
+  secrets: SecretItem[];
   refreshSecrets: () => Promise<void>;
   loading: boolean;
 }
 
 const SecretsPage = ({ secrets, refreshSecrets, loading }: SecretsPageProps) => {
+  const client = useClient();
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
   const [newDomain, setNewDomain] = useState("");
@@ -534,7 +533,7 @@ const SecretsPage = ({ secrets, refreshSecrets, loading }: SecretsPageProps) => 
     setSaving(true);
     setError(null);
     try {
-      await createSecret({
+      await client.createSecret({
         name: newKey,
         service: "Custom",
         secret_type: "api_key",
@@ -553,7 +552,7 @@ const SecretsPage = ({ secrets, refreshSecrets, loading }: SecretsPageProps) => 
   const removeSecretHandler = async (id: string) => {
     setError(null);
     try {
-      await deleteSecret(id);
+      await client.deleteSecret(id);
       await refreshSecrets();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to delete secret");
@@ -564,7 +563,7 @@ const SecretsPage = ({ secrets, refreshSecrets, loading }: SecretsPageProps) => 
     if (!rotateVal) return;
     setError(null);
     try {
-      await rotateSecret(id, rotateVal);
+      await client.rotateSecret(id, rotateVal);
       setRotateId(null);
       setRotateVal("");
       await refreshSecrets();
@@ -759,6 +758,7 @@ interface FilesystemPageProps {
 }
 
 const FilesystemPage = ({ grants, setGrants }: FilesystemPageProps) => {
+  const client = useClient();
   const blocked = [
     { path: "~/.ssh", reason: "SSH keys" },
     { path: "~/.aws", reason: "AWS credentials" },
@@ -785,10 +785,10 @@ const FilesystemPage = ({ grants, setGrants }: FilesystemPageProps) => {
     setFsError(null);
     try {
       if (existing) {
-        await deleteGrant(existing.id);
+        await client.deleteGrant(existing.id);
         setGrants(grants.filter(g => g.path !== path));
       } else {
-        const grant = await createGrant({ path, permissions: ["read"], recursive: true });
+        const grant = await client.createGrant({ path, permissions: ["read"], recursive: true });
         setGrants([...grants, { id: grant.id, path: grant.path, permission: "read", recursive: grant.recursive, approval: grant.requires_approval }]);
       }
     } catch (e) {
@@ -801,9 +801,9 @@ const FilesystemPage = ({ grants, setGrants }: FilesystemPageProps) => {
     setFsError(null);
     try {
       // Delete and re-create with new permissions
-      await deleteGrant(existing.id);
+      await client.deleteGrant(existing.id);
       const permArray = perm === "write" ? ["read", "write"] : perm === "approval" ? ["read"] : ["read"];
-      const grant = await createGrant({ path, permissions: permArray, recursive: true, requires_approval: perm === "approval" });
+      const grant = await client.createGrant({ path, permissions: permArray, recursive: true, requires_approval: perm === "approval" });
       setGrants(grants.map(g => g.path === path ? { id: grant.id, path: grant.path, permission: perm, recursive: grant.recursive, approval: grant.requires_approval } : g));
     } catch (e) {
       setFsError(e instanceof ApiError ? e.message : "Failed to update permission");
@@ -1055,17 +1055,18 @@ const SessionsPage = () => {
 type AuditFilter = "all" | "secrets" | "filesystem" | "blocked";
 
 const AuditPage = () => {
-  const [entries, setEntries] = useState<AuditRow[]>([]);
+  const client = useClient();
+  const [entries, setEntries] = useState<AuditItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalCount, setTotalCount] = useState(0);
   const [filter, setFilter] = useState<AuditFilter>("all");
 
   useEffect(() => {
-    Promise.all([fetchAuditLog(200), fetchAuditCount()])
+    Promise.all([client.fetchAuditLog(200), client.fetchAuditCount()])
       .then(([rows, count]) => { setEntries(rows); setTotalCount(count); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [client]);
 
   const filtered = entries.filter(e => {
     if (filter === "all") return true;
@@ -1261,8 +1262,9 @@ const BUILTIN_RULES = [
 ];
 
 const PoliciesPage = () => {
-  const [policies, setPolicies] = useState<PolicyRow[]>([]);
-  const [blockedEntries, setBlockedEntries] = useState<AuditRow[]>([]);
+  const client = useClient();
+  const [policies, setPolicies] = useState<PolicyItem[]>([]);
+  const [blockedEntries, setBlockedEntries] = useState<AuditItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -1274,13 +1276,13 @@ const PoliciesPage = () => {
 
   useEffect(() => {
     Promise.all([
-      fetchPolicies(),
-      fetchAuditLog(200),
+      client.fetchPolicies(),
+      client.fetchAuditLog(200),
     ]).then(([p, audit]) => {
       setPolicies(p);
       setBlockedEntries(audit.filter(e => e.blocking_rule === "fs_content_scan"));
     }).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+  }, [client]);
 
   const handleAddRule = async () => {
     if (!newPattern || !newMessage) return;
@@ -1291,7 +1293,7 @@ const PoliciesPage = () => {
         on: "write" as const,
         block_if_contains: [{ pattern: newPattern, message: newMessage }],
       };
-      const added = await addPolicy(rule);
+      const added = await client.addPolicy(rule);
       setPolicies([...policies, added]);
       setNewPattern("");
       setNewMessage("");
@@ -1305,7 +1307,7 @@ const PoliciesPage = () => {
   const handleRemoveRule = async (id: string) => {
     setError(null);
     try {
-      await removePolicy(id);
+      await client.removePolicy(id);
       setPolicies(policies.filter(p => p.id !== id));
     } catch (e) {
       setError((e as Error).message);
@@ -1315,7 +1317,7 @@ const PoliciesPage = () => {
   const handleToggle = async (id: string, enabled: boolean) => {
     setError(null);
     try {
-      await togglePolicy(id, enabled);
+      await client.togglePolicy(id, enabled);
       setPolicies(policies.map(p => p.id === id ? { ...p, enabled: enabled ? 1 : 0 } : p));
     } catch (e) {
       setError((e as Error).message);
@@ -1550,6 +1552,8 @@ const PoliciesPage = () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const SecurityPage = () => {
+  const client = useClient();
+  const mode = client.mode;
   const [totpEnabled, setTotpEnabled] = useState<boolean | null>(null);
   const [setupData, setSetupData] = useState<{ otpauth_uri: string; secret: string } | null>(null);
   const [code, setCode] = useState("");
@@ -1557,13 +1561,36 @@ const SecurityPage = () => {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    getTotpStatus().then(s => setTotpEnabled(s.totp_enabled)).catch(() => {});
-  }, []);
+    if (mode === 'local') return;
+    client.getTotpStatus().then(s => setTotpEnabled(s.totp_enabled)).catch(() => {});
+  }, [client, mode]);
+
+  if (mode === 'local') {
+    return (
+      <div>
+        <div style={{ marginBottom: 32 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 600, color: tokens.text.primary, margin: 0 }}>Security</h1>
+          <p style={{ fontSize: 14, color: tokens.text.secondary, margin: "6px 0 0" }}>
+            Two-factor authentication and account security.
+          </p>
+        </div>
+        <div style={{
+          padding: "24px", borderRadius: 8,
+          border: `1px solid ${tokens.border.default}`, background: tokens.bg.surface,
+          textAlign: "center", color: tokens.text.tertiary, fontSize: 14,
+        }}>
+          <Shield size={24} style={{ marginBottom: 8, opacity: 0.5 }} />
+          <p>2FA is not available in local mode.</p>
+          <p style={{ fontSize: 12, marginTop: 4 }}>Switch to Docker mode for multi-user authentication.</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleSetup = async () => {
     setError(null);
     try {
-      const data = await setupTotp();
+      const data = await client.setupTotp();
       setSetupData(data);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to start 2FA setup");
@@ -1575,7 +1602,7 @@ const SecurityPage = () => {
     setSubmitting(true);
     setError(null);
     try {
-      await confirmTotp(code);
+      await client.confirmTotp(code);
       setTotpEnabled(true);
       setSetupData(null);
       setCode("");
@@ -1591,7 +1618,7 @@ const SecurityPage = () => {
     setSubmitting(true);
     setError(null);
     try {
-      await disableTotp(code);
+      await client.disableTotp(code);
       setTotpEnabled(false);
       setCode("");
     } catch (e) {
@@ -1758,6 +1785,7 @@ const SecurityPage = () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
+  const client = useClient();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isRegister, setIsRegister] = useState(false);
@@ -1775,10 +1803,10 @@ const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
     setError(null);
     try {
       if (isRegister) {
-        await register(email, password);
+        await client.register(email, password);
         onSuccess();
       } else {
-        const result = await login(email, password);
+        const result = await client.login(email, password);
         if (result.requires_totp && result.totp_token) {
           setTotpToken(result.totp_token);
         } else {
@@ -1798,7 +1826,7 @@ const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
     setSubmitting(true);
     setError(null);
     try {
-      await verifyTotp(totpToken, totpCode);
+      await client.verifyTotp(totpToken, totpCode);
       onSuccess();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Invalid code");
@@ -1968,13 +1996,17 @@ const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
 type PageId = "secrets" | "filesystem" | "sessions" | "audit" | "policies" | "security";
 
 export default function BlindKeyDashboard() {
-  const [authed, setAuthed] = useState(isLoggedIn());
+  const client = getClientSync()!;
+  const mode = getMode();
+
+  // In local mode, user is always authenticated
+  const [authed, setAuthed] = useState(mode === 'local' ? true : client.isLoggedIn());
   const [expertMode, setExpertMode] = useState(false);
   const [activePage, setActivePage] = useState<PageId>("secrets");
   const [sidebarHover, setSidebarHover] = useState<string | null>(null);
 
   // Secrets state — fetched from API
-  const [secrets, setSecrets] = useState<SecretMetadata[]>([]);
+  const [secrets, setSecrets] = useState<SecretItem[]>([]);
   const [secretsLoading, setSecretsLoading] = useState(true);
 
   // Filesystem grants (persisted via API)
@@ -1994,7 +2026,7 @@ export default function BlindKeyDashboard() {
 
   const refreshSecrets = useCallback(async () => {
     try {
-      const data = await fetchSecrets();
+      const data = await client.fetchSecrets();
       setSecrets(data);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
@@ -2003,11 +2035,11 @@ export default function BlindKeyDashboard() {
     } finally {
       setSecretsLoading(false);
     }
-  }, []);
+  }, [client]);
 
   const refreshGrants = useCallback(async () => {
     try {
-      const data = await fetchGrants();
+      const data = await client.fetchGrants();
       setGrants(data.map(g => ({
         id: g.id,
         path: g.path,
@@ -2018,7 +2050,7 @@ export default function BlindKeyDashboard() {
     } catch {
       // Grants endpoint may not exist on older API servers — degrade gracefully
     }
-  }, []);
+  }, [client]);
 
   // Fetch secrets and grants on mount
   useEffect(() => {
@@ -2029,34 +2061,40 @@ export default function BlindKeyDashboard() {
   }, [authed, refreshSecrets, refreshGrants]);
 
   const handleLogout = () => {
-    clearToken();
+    client.logout();
     setAuthed(false);
     setSecrets([]);
   };
 
-  // Not logged in — show login screen
-  if (!authed) {
-    return <LoginScreen onSuccess={() => setAuthed(true)} />;
+  // Not logged in (Docker mode only) — show login screen
+  if (!authed && mode === 'docker') {
+    return (
+      <ClientContext.Provider value={client}>
+        <LoginScreen onSuccess={() => setAuthed(true)} />
+      </ClientContext.Provider>
+    );
   }
 
   // Simple mode
   if (!expertMode) {
     return (
-      <div style={{
-        minHeight: "100vh", background: tokens.bg.root,
-        fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, sans-serif",
-        color: tokens.text.primary,
-      }}>
-        <SimpleDashboard
-          secrets={secrets}
-          refreshSecrets={refreshSecrets}
-          loading={secretsLoading}
-          grants={grants}
-          setGrants={setGrants}
-          onSwitchToExpert={() => setExpertMode(true)}
-          onLogout={handleLogout}
-        />
-      </div>
+      <ClientContext.Provider value={client}>
+        <div style={{
+          minHeight: "100vh", background: tokens.bg.root,
+          fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, sans-serif",
+          color: tokens.text.primary,
+        }}>
+          <SimpleDashboard
+            secrets={secrets}
+            refreshSecrets={refreshSecrets}
+            loading={secretsLoading}
+            grants={grants}
+            setGrants={setGrants}
+            onSwitchToExpert={() => setExpertMode(true)}
+            onLogout={handleLogout}
+          />
+        </div>
+      </ClientContext.Provider>
     );
   }
 
@@ -2067,7 +2105,7 @@ export default function BlindKeyDashboard() {
     { id: "sessions", label: "Sessions", icon: Shield },
     { id: "audit", label: "Audit Log", icon: Activity },
     { id: "policies", label: "Policies", icon: FileWarning },
-    { id: "security", label: "Security", icon: Lock },
+    ...(mode === 'docker' ? [{ id: "security" as PageId, label: "Security", icon: Lock }] : []),
   ];
 
   const pages: Record<PageId, React.ReactNode> = {
@@ -2080,89 +2118,94 @@ export default function BlindKeyDashboard() {
   };
 
   return (
-    <div style={{
-      display: "flex", minHeight: "100vh", background: tokens.bg.root,
-      fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, sans-serif",
-      color: tokens.text.primary,
-    }}>
-      {/* Sidebar */}
+    <ClientContext.Provider value={client}>
       <div style={{
-        width: 240, borderRight: `1px solid ${tokens.border.default}`,
-        display: "flex", flexDirection: "column",
-        position: "fixed", top: 0, left: 0, bottom: 0,
-        background: tokens.bg.root, zIndex: 10,
+        display: "flex", minHeight: "100vh", background: tokens.bg.root,
+        fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, sans-serif",
+        color: tokens.text.primary,
       }}>
-        {/* Logo */}
+        {/* Sidebar */}
         <div style={{
-          padding: "20px 20px 16px", display: "flex", alignItems: "center", gap: 10,
-          borderBottom: `1px solid ${tokens.border.default}`,
+          width: 240, borderRight: `1px solid ${tokens.border.default}`,
+          display: "flex", flexDirection: "column",
+          position: "fixed", top: 0, left: 0, bottom: 0,
+          background: tokens.bg.root, zIndex: 10,
         }}>
+          {/* Logo */}
           <div style={{
-            width: 28, height: 28, borderRadius: 6,
-            background: `linear-gradient(135deg, ${tokens.accent.base}, #00a85a)`,
-            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "20px 20px 16px", display: "flex", alignItems: "center", gap: 10,
+            borderBottom: `1px solid ${tokens.border.default}`,
           }}>
-            <Shield size={16} style={{ color: tokens.text.inverse }} />
+            <div style={{
+              width: 28, height: 28, borderRadius: 6,
+              background: `linear-gradient(135deg, ${tokens.accent.base}, #00a85a)`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <Shield size={16} style={{ color: tokens.text.inverse }} />
+            </div>
+            <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>BlindKey</span>
+            <Badge color="yellow">Expert</Badge>
+            {mode === 'local' && <Badge color="blue">Local</Badge>}
           </div>
-          <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>BlindKey</span>
-          <Badge color="yellow">Expert</Badge>
-        </div>
 
-        {/* Nav */}
-        <nav style={{ padding: "12px 8px", flex: 1 }}>
-          {nav.map(item => {
-            const Icon = item.icon;
-            const active = activePage === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setActivePage(item.id)}
-                onMouseEnter={() => setSidebarHover(item.id)}
-                onMouseLeave={() => setSidebarHover(null)}
-                style={{
-                  width: "100%", display: "flex", alignItems: "center", gap: 10,
-                  padding: "8px 12px", marginBottom: 2, borderRadius: 6,
-                  background: active ? "rgba(255,255,255,0.06)" : sidebarHover === item.id ? "rgba(255,255,255,0.03)" : "transparent",
-                  border: "none", cursor: "pointer",
-                  color: active ? tokens.text.primary : tokens.text.secondary,
-                  fontSize: 13, fontWeight: active ? 500 : 400, textAlign: "left",
-                  position: "relative",
-                }}
-              >
-                {active && <div style={{
-                  position: "absolute", left: -8, top: "50%", transform: "translateY(-50%)",
-                  width: 3, height: 16, borderRadius: 2, background: tokens.accent.base,
-                }} />}
-                <Icon size={17} style={{ opacity: active ? 1 : 0.5 }} />
-                {item.label}
+          {/* Nav */}
+          <nav style={{ padding: "12px 8px", flex: 1 }}>
+            {nav.map(item => {
+              const Icon = item.icon;
+              const active = activePage === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActivePage(item.id)}
+                  onMouseEnter={() => setSidebarHover(item.id)}
+                  onMouseLeave={() => setSidebarHover(null)}
+                  style={{
+                    width: "100%", display: "flex", alignItems: "center", gap: 10,
+                    padding: "8px 12px", marginBottom: 2, borderRadius: 6,
+                    background: active ? "rgba(255,255,255,0.06)" : sidebarHover === item.id ? "rgba(255,255,255,0.03)" : "transparent",
+                    border: "none", cursor: "pointer",
+                    color: active ? tokens.text.primary : tokens.text.secondary,
+                    fontSize: 13, fontWeight: active ? 500 : 400, textAlign: "left",
+                    position: "relative",
+                  }}
+                >
+                  {active && <div style={{
+                    position: "absolute", left: -8, top: "50%", transform: "translateY(-50%)",
+                    width: 3, height: 16, borderRadius: 2, background: tokens.accent.base,
+                  }} />}
+                  <Icon size={17} style={{ opacity: active ? 1 : 0.5 }} />
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Bottom sidebar actions */}
+          <div style={{ padding: "12px 16px", borderTop: `1px solid ${tokens.border.default}`, display: "flex", flexDirection: "column", gap: 8 }}>
+            <button onClick={() => setExpertMode(false)} style={{
+              width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              padding: "8px", background: "none", border: `1px solid ${tokens.border.default}`,
+              borderRadius: 6, color: tokens.text.secondary, fontSize: 12, cursor: "pointer",
+            }}>
+              Switch to Simple Mode
+            </button>
+            {mode === 'docker' && (
+              <button onClick={handleLogout} style={{
+                width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                padding: "8px", background: "none", border: "none",
+                color: tokens.text.tertiary, fontSize: 12, cursor: "pointer",
+              }}>
+                <LogOut size={14} /> Log out
               </button>
-            );
-          })}
-        </nav>
+            )}
+          </div>
+        </div>
 
-        {/* Bottom sidebar actions */}
-        <div style={{ padding: "12px 16px", borderTop: `1px solid ${tokens.border.default}`, display: "flex", flexDirection: "column", gap: 8 }}>
-          <button onClick={() => setExpertMode(false)} style={{
-            width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            padding: "8px", background: "none", border: `1px solid ${tokens.border.default}`,
-            borderRadius: 6, color: tokens.text.secondary, fontSize: 12, cursor: "pointer",
-          }}>
-            Switch to Simple Mode
-          </button>
-          <button onClick={handleLogout} style={{
-            width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            padding: "8px", background: "none", border: "none",
-            color: tokens.text.tertiary, fontSize: 12, cursor: "pointer",
-          }}>
-            <LogOut size={14} /> Log out
-          </button>
+        {/* Main Content */}
+        <div style={{ marginLeft: 240, flex: 1, padding: "32px 40px", maxWidth: 1200 }}>
+          {pages[activePage]}
         </div>
       </div>
-
-      {/* Main Content */}
-      <div style={{ marginLeft: 240, flex: 1, padding: "32px 40px", maxWidth: 1200 }}>
-        {pages[activePage]}
-      </div>
-    </div>
+    </ClientContext.Provider>
   );
 }
