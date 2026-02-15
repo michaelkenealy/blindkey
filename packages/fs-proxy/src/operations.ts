@@ -1,5 +1,5 @@
-import { readFile, writeFile, appendFile, stat, readdir, unlink, mkdir } from 'node:fs/promises';
-import { resolve, dirname } from 'node:path';
+import { readFile, writeFile, appendFile, stat, readdir, unlink, mkdir, realpath } from 'node:fs/promises';
+import { resolve, dirname, basename } from 'node:path';
 import type { FsRequest } from '@blindkey/core';
 
 export interface FsReadResult {
@@ -27,8 +27,40 @@ export interface FsInfoResult {
   permissions: string;
 }
 
+async function resolveFromNearestExistingAncestor(targetPath: string): Promise<string> {
+  let cursor = resolve(targetPath);
+  const missingSegments: string[] = [];
+
+  while (true) {
+    try {
+      const canonicalBase = await realpath(cursor);
+      return missingSegments.reduceRight((acc, segment) => resolve(acc, segment), canonicalBase);
+    } catch {
+      const parent = dirname(cursor);
+      if (parent === cursor) {
+        throw new Error(`Unable to canonicalize path: ${targetPath}`);
+      }
+      missingSegments.push(basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+
+async function resolveExecutionPath(request: FsRequest): Promise<string> {
+  const resolved = resolve(request.path);
+
+  try {
+    return await realpath(resolved);
+  } catch {
+    if (request.operation === 'create' || request.operation === 'write') {
+      return resolveFromNearestExistingAncestor(resolved);
+    }
+    throw new Error(`Path does not exist: ${resolved}`);
+  }
+}
+
 export async function executeRead(request: FsRequest): Promise<FsReadResult> {
-  const fullPath = resolve(request.path);
+  const fullPath = await resolveExecutionPath(request);
   const encoding = (request.encoding ?? 'utf-8') as BufferEncoding;
   const content = await readFile(fullPath, { encoding });
   const info = await stat(fullPath);
@@ -36,7 +68,7 @@ export async function executeRead(request: FsRequest): Promise<FsReadResult> {
 }
 
 export async function executeWrite(request: FsRequest): Promise<FsWriteResult> {
-  const fullPath = resolve(request.path);
+  const fullPath = await resolveExecutionPath(request);
   const content = request.content ?? '';
 
   if (request.operation === 'create') {
@@ -53,7 +85,7 @@ export async function executeWrite(request: FsRequest): Promise<FsWriteResult> {
 }
 
 export async function executeList(request: FsRequest): Promise<FsListEntry[]> {
-  const fullPath = resolve(request.path);
+  const fullPath = await resolveExecutionPath(request);
   const entries = await readdir(fullPath, { withFileTypes: true });
 
   const results: FsListEntry[] = [];
@@ -81,12 +113,12 @@ export async function executeList(request: FsRequest): Promise<FsListEntry[]> {
 }
 
 export async function executeDelete(request: FsRequest): Promise<void> {
-  const fullPath = resolve(request.path);
+  const fullPath = await resolveExecutionPath(request);
   await unlink(fullPath);
 }
 
 export async function executeInfo(request: FsRequest): Promise<FsInfoResult> {
-  const fullPath = resolve(request.path);
+  const fullPath = await resolveExecutionPath(request);
   const info = await stat(fullPath);
   const name = fullPath.split(/[/\\]/).pop() ?? '';
 
