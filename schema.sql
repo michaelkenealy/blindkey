@@ -152,3 +152,14 @@ CREATE TRIGGER fs_audit_log_no_update
 CREATE TRIGGER fs_audit_log_no_delete
   BEFORE DELETE ON fs_audit_log
   FOR EACH ROW EXECUTE FUNCTION prevent_audit_modification();
+
+-- Login throttling state (auth abuse protection)
+CREATE TABLE auth_login_attempts (
+  bucket          TEXT PRIMARY KEY,
+  failed_count    INT NOT NULL DEFAULT 0,
+  first_failed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_failed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  locked_until    TIMESTAMPTZ
+);
+
+CREATE INDEX idx_auth_login_attempts_locked_until ON auth_login_attempts (locked_until);
