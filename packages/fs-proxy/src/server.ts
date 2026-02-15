@@ -14,6 +14,8 @@ import { GrantService } from './grants.js';
 import { FsAuditService } from './audit.js';
 import { scanRequest, hashContent } from './scanner.js';
 import { executeRead, executeWrite, executeList, executeDelete, executeInfo } from './operations.js';
+import { realpath, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 const { Pool } = pg;
 
@@ -93,7 +95,7 @@ export async function createFsProxyServer(config: FsProxyServerConfig) {
     request.session = session;
   });
 
-  // ── Filesystem operation endpoint ──
+  // -- Filesystem operation endpoint --
 
   interface FsRequestBody {
     operation: FsOperation;
@@ -124,7 +126,7 @@ export async function createFsProxyServer(config: FsProxyServerConfig) {
       throw new FsAccessDeniedError(path, operation);
     }
 
-    // 2. Check if grant requires approval (stub — future: queue for approval)
+    // 2. Check if grant requires approval (stub - future: queue for approval)
     if (grantResult.grant?.requires_approval) {
       await auditService.log({
         session_id: session.id,
@@ -140,7 +142,16 @@ export async function createFsProxyServer(config: FsProxyServerConfig) {
     }
 
     // 3. Run policy checks (block patterns, size limits, content scan)
-    const contentSize = content ? Buffer.byteLength(content, 'utf-8') : undefined;
+    let contentSize: number | undefined;
+
+    if (operation === 'read') {
+      const canonicalPath = await realpath(resolve(path));
+      const fileInfo = await stat(canonicalPath);
+      contentSize = fileInfo.size;
+    } else if (content !== undefined) {
+      contentSize = Buffer.byteLength(content, 'utf-8');
+    }
+
     const policyResult = scanRequest(fsRequest, [], contentSize);
 
     if (!policyResult.allowed) {
@@ -227,7 +238,7 @@ export async function createFsProxyServer(config: FsProxyServerConfig) {
     }
   });
 
-  // ── List grants for current session ──
+  // -- List grants for current session --
 
   app.get('/v1/fs/grants', async (request, reply) => {
     const session = request.session!;
