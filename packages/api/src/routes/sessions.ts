@@ -21,6 +21,7 @@ interface CreateSessionBody {
 }
 
 const DEFAULT_TTL = 3600; // 1 hour
+const MIN_TTL = 60; // 1 minute
 const MAX_TTL = 86400; // 24 hours
 
 export function registerSessionsRoutes(app: FastifyInstance, db: Pool) {
@@ -30,7 +31,7 @@ export function registerSessionsRoutes(app: FastifyInstance, db: Pool) {
     const { allowed_secrets, policy_set_id, ttl_seconds, filesystem_grants, metadata } = request.body;
 
     if (!allowed_secrets || allowed_secrets.length === 0) {
-      throw new ValidationError('allowed_secrets must contain at least one vault reference');
+      throw new ValidationError(`ttl_seconds must be an integer between ${MIN_TTL} and ${MAX_TTL}`);
     }
 
     // Verify all vault refs belong to this user
@@ -58,7 +59,12 @@ export function registerSessionsRoutes(app: FastifyInstance, db: Pool) {
       }
     }
 
-    const ttl = Math.min(ttl_seconds ?? DEFAULT_TTL, MAX_TTL);
+    const requestedTtl = ttl_seconds ?? DEFAULT_TTL;
+    if (!Number.isInteger(requestedTtl) || requestedTtl < MIN_TTL || requestedTtl > MAX_TTL) {
+      throw new ValidationError(`ttl_seconds must be an integer between ${MIN_TTL} and ${MAX_TTL}`);
+    }
+
+    const ttl = requestedTtl;
     const sessionToken = generateSessionToken();
     const tokenHash = hashToken(sessionToken);
     const expiresAt = new Date(Date.now() + ttl * 1000);
@@ -77,7 +83,7 @@ export function registerSessionsRoutes(app: FastifyInstance, db: Pool) {
     if (filesystem_grants && filesystem_grants.length > 0) {
       for (const grant of filesystem_grants) {
         if (!grant.path || !grant.permissions || grant.permissions.length === 0) {
-          throw new ValidationError('Each filesystem grant must have a path and at least one permission');
+          throw new ValidationError(`ttl_seconds must be an integer between ${MIN_TTL} and ${MAX_TTL}`);
         }
         const grantResult = await db.query(
           `INSERT INTO filesystem_grants (session_id, path, permissions, recursive, requires_approval)
@@ -149,3 +155,5 @@ export function registerSessionsRoutes(app: FastifyInstance, db: Pool) {
     return reply.code(204).send();
   });
 }
+
+
