@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { ValidationError, AuthenticationError } from '@blindkey/core';
+import * as OTPAuth from 'otpauth';
+import { ValidationError, AuthenticationError, encrypt, decrypt } from '@blindkey/core';
 
 interface RegisterBody {
   email: string;
@@ -12,6 +13,15 @@ interface RegisterBody {
 interface LoginBody {
   email: string;
   password: string;
+}
+
+interface VerifyTotpBody {
+  totp_token: string;
+  code: string;
+}
+
+interface SetupTotpBody {
+  code: string;
 }
 
 interface LoginAttemptRow {
@@ -27,6 +37,7 @@ const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOCKOUT_MS = 15 * 60 * 1000;
 const MAX_FAILED_BY_EMAIL = 8;
 const MAX_FAILED_BY_IP = 20;
+const TOTP_TOKEN_EXPIRY = '5m';
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -137,7 +148,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: Pool, jwtSecret: st
     });
   });
 
-  // Login
+  // Login — returns JWT directly, or a short-lived totp_token if 2FA is enabled
   app.post<{ Body: LoginBody }>('/v1/auth/login', async (request, reply) => {
     const { email, password } = request.body;
 
@@ -150,7 +161,10 @@ export function registerAuthRoutes(app: FastifyInstance, db: Pool, jwtSecret: st
 
     await assertNotLocked(db, [emailBucket, ipBucket]);
 
-    const result = await db.query('SELECT id, email, password_hash, created_at FROM users WHERE email = $1', [normalizedEmail]);
+    const result = await db.query(
+      'SELECT id, email, password_hash, created_at, totp_enabled FROM users WHERE email = $1',
+      [normalizedEmail]
+    );
     if (result.rows.length === 0) {
       await recordLoginFailure(db, emailBucket, ipBucket);
       throw new AuthenticationError('Invalid email or password');
@@ -165,11 +179,221 @@ export function registerAuthRoutes(app: FastifyInstance, db: Pool, jwtSecret: st
 
     await clearLoginFailures(db, emailBucket, ipBucket);
 
+    // If 2FA is enabled, return a short-lived TOTP token instead of a full JWT
+    if (user.totp_enabled) {
+      const totpToken = jwt.sign(
+        { sub: user.id, email: user.email, purpose: 'totp_verify' },
+        jwtSecret,
+        { expiresIn: TOTP_TOKEN_EXPIRY },
+      );
+      return reply.send({
+        requires_totp: true,
+        totp_token: totpToken,
+      });
+    }
+
     const token = jwt.sign({ sub: user.id, email: user.email }, jwtSecret, { expiresIn: '24h' });
 
     return reply.send({
       user: { id: user.id, email: user.email, created_at: user.created_at },
       token,
     });
+  });
+
+  // Verify TOTP code to complete login
+  app.post<{ Body: VerifyTotpBody }>('/v1/auth/verify-totp', async (request, reply) => {
+    const { totp_token, code } = request.body;
+
+    if (!totp_token || !code) {
+      throw new ValidationError('totp_token and code are required');
+    }
+
+    let payload: { sub: string; email: string; purpose?: string };
+    try {
+      payload = jwt.verify(totp_token, jwtSecret) as typeof payload;
+    } catch {
+      throw new AuthenticationError('Invalid or expired TOTP token. Please log in again.');
+    }
+
+    if (payload.purpose !== 'totp_verify') {
+      throw new AuthenticationError('Invalid token type');
+    }
+
+    const result = await db.query(
+      'SELECT id, email, created_at, totp_secret, totp_iv, totp_auth_tag FROM users WHERE id = $1',
+      [payload.sub]
+    );
+    if (result.rows.length === 0) {
+      throw new AuthenticationError('User not found');
+    }
+
+    const user = result.rows[0];
+    const secret = decrypt(user.totp_secret, user.totp_iv, user.totp_auth_tag);
+
+    const totp = new OTPAuth.TOTP({
+      issuer: 'BlindKey',
+      label: user.email,
+      algorithm: 'SHA1',
+      digits: 6,
+      period: 30,
+      secret: OTPAuth.Secret.fromBase32(secret),
+    });
+
+    const delta = totp.validate({ token: code, window: 1 });
+    if (delta === null) {
+      throw new AuthenticationError('Invalid TOTP code');
+    }
+
+    const token = jwt.sign({ sub: user.id, email: user.email }, jwtSecret, { expiresIn: '24h' });
+
+    return reply.send({
+      user: { id: user.id, email: user.email, created_at: user.created_at },
+      token,
+    });
+  });
+
+  // Begin TOTP setup — returns the otpauth URI for QR code generation
+  // Requires JWT auth (user must be logged in)
+  app.post('/v1/auth/setup-totp', async (request, reply) => {
+    const userId = request.userId!;
+
+    const result = await db.query('SELECT email, totp_enabled FROM users WHERE id = $1', [userId]);
+    if (result.rows.length === 0) {
+      throw new AuthenticationError('User not found');
+    }
+
+    const user = result.rows[0];
+    if (user.totp_enabled) {
+      throw new ValidationError('TOTP is already enabled. Disable it first to reconfigure.');
+    }
+
+    // Generate a new TOTP secret
+    const secret = new OTPAuth.Secret({ size: 20 });
+    const totp = new OTPAuth.TOTP({
+      issuer: 'BlindKey',
+      label: user.email,
+      algorithm: 'SHA1',
+      digits: 6,
+      period: 30,
+      secret,
+    });
+
+    // Encrypt and store the secret (not yet enabled — user must confirm with a code)
+    const { encrypted, iv, authTag } = encrypt(secret.base32);
+
+    await db.query(
+      `UPDATE users SET totp_secret = $1, totp_iv = $2, totp_auth_tag = $3
+       WHERE id = $4`,
+      [encrypted, iv, authTag, userId]
+    );
+
+    return reply.send({
+      otpauth_uri: totp.toString(),
+      secret: secret.base32,
+    });
+  });
+
+  // Confirm TOTP setup — user sends a code to prove they scanned the QR
+  app.post<{ Body: SetupTotpBody }>('/v1/auth/confirm-totp', async (request, reply) => {
+    const userId = request.userId!;
+    const { code } = request.body;
+
+    if (!code) {
+      throw new ValidationError('code is required');
+    }
+
+    const result = await db.query(
+      'SELECT totp_secret, totp_iv, totp_auth_tag, totp_enabled, email FROM users WHERE id = $1',
+      [userId]
+    );
+    if (result.rows.length === 0) {
+      throw new AuthenticationError('User not found');
+    }
+
+    const user = result.rows[0];
+    if (user.totp_enabled) {
+      throw new ValidationError('TOTP is already enabled');
+    }
+    if (!user.totp_secret) {
+      throw new ValidationError('No TOTP secret configured. Call setup-totp first.');
+    }
+
+    const secret = decrypt(user.totp_secret, user.totp_iv, user.totp_auth_tag);
+
+    const totp = new OTPAuth.TOTP({
+      issuer: 'BlindKey',
+      label: user.email,
+      algorithm: 'SHA1',
+      digits: 6,
+      period: 30,
+      secret: OTPAuth.Secret.fromBase32(secret),
+    });
+
+    const delta = totp.validate({ token: code, window: 1 });
+    if (delta === null) {
+      throw new AuthenticationError('Invalid TOTP code. Make sure your authenticator app is synced.');
+    }
+
+    await db.query('UPDATE users SET totp_enabled = true WHERE id = $1', [userId]);
+
+    return reply.send({ totp_enabled: true });
+  });
+
+  // Disable TOTP — requires a valid TOTP code as confirmation
+  app.post<{ Body: SetupTotpBody }>('/v1/auth/disable-totp', async (request, reply) => {
+    const userId = request.userId!;
+    const { code } = request.body;
+
+    if (!code) {
+      throw new ValidationError('code is required to disable TOTP');
+    }
+
+    const result = await db.query(
+      'SELECT totp_secret, totp_iv, totp_auth_tag, totp_enabled, email FROM users WHERE id = $1',
+      [userId]
+    );
+    if (result.rows.length === 0) {
+      throw new AuthenticationError('User not found');
+    }
+
+    const user = result.rows[0];
+    if (!user.totp_enabled) {
+      throw new ValidationError('TOTP is not enabled');
+    }
+
+    const secret = decrypt(user.totp_secret, user.totp_iv, user.totp_auth_tag);
+
+    const totp = new OTPAuth.TOTP({
+      issuer: 'BlindKey',
+      label: user.email,
+      algorithm: 'SHA1',
+      digits: 6,
+      period: 30,
+      secret: OTPAuth.Secret.fromBase32(secret),
+    });
+
+    const delta = totp.validate({ token: code, window: 1 });
+    if (delta === null) {
+      throw new AuthenticationError('Invalid TOTP code');
+    }
+
+    await db.query(
+      'UPDATE users SET totp_enabled = false, totp_secret = NULL, totp_iv = NULL, totp_auth_tag = NULL WHERE id = $1',
+      [userId]
+    );
+
+    return reply.send({ totp_enabled: false });
+  });
+
+  // Check TOTP status (for the UI)
+  app.get('/v1/auth/totp-status', async (request, reply) => {
+    const userId = request.userId!;
+
+    const result = await db.query('SELECT totp_enabled FROM users WHERE id = $1', [userId]);
+    if (result.rows.length === 0) {
+      throw new AuthenticationError('User not found');
+    }
+
+    return reply.send({ totp_enabled: result.rows[0].totp_enabled });
   });
 }

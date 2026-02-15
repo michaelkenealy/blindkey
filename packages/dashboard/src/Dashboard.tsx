@@ -1,5 +1,11 @@
-import { useState } from "react";
-import { Lock, LockOpen, Eye, EyeOff, Plus, X, Copy, Shield, FolderOpen, Folder, Key, Activity, AlertTriangle, Check, RefreshCw, Settings, ChevronRight, Zap } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Lock, LockOpen, Plus, X, Copy, Shield, FolderOpen, Folder, Key, Activity, AlertTriangle, Check, RefreshCw, ChevronRight, Zap, LogOut, Loader } from "lucide-react";
+import {
+  isLoggedIn, clearToken, login, register, verifyTotp,
+  fetchSecrets, createSecret, deleteSecret, rotateSecret,
+  setupTotp, confirmTotp, disableTotp, getTotpStatus,
+  type SecretMetadata, ApiError,
+} from "./api";
 
 // ─── Design Tokens ───
 const tokens = {
@@ -37,16 +43,8 @@ const Badge = ({ children, color = "accent" }: { children: React.ReactNode; colo
 };
 
 // ─── Shared State Types ───
-interface SecretEntry {
-  id: number;
-  name: string;
-  value: string;
-  service: string;
-  domains: string[];
-  ttl: number;
-  visible: boolean;
-  created: string;
-}
+// SecretEntry is now SecretMetadata from the API (see api.ts).
+// No plaintext value is ever stored client-side after creation.
 
 interface FsGrant {
   id: number;
@@ -62,29 +60,52 @@ interface FsGrant {
 // ═══════════════════════════════════════════════════════════════════════════
 
 interface SimpleDashboardProps {
-  secrets: SecretEntry[];
-  setSecrets: React.Dispatch<React.SetStateAction<SecretEntry[]>>;
+  secrets: SecretMetadata[];
+  refreshSecrets: () => Promise<void>;
+  loading: boolean;
   grants: FsGrant[];
   setGrants: React.Dispatch<React.SetStateAction<FsGrant[]>>;
   onSwitchToExpert: () => void;
+  onLogout: () => void;
 }
 
-const SimpleDashboard = ({ secrets, setSecrets, grants, setGrants, onSwitchToExpert }: SimpleDashboardProps) => {
+const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, onSwitchToExpert, onLogout }: SimpleDashboardProps) => {
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
   const [newPath, setNewPath] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const addSecret = () => {
+  const addSecret = async () => {
     if (!newKey || !newVal) return;
-    setSecrets([...secrets, {
-      id: Date.now(), name: newKey.toUpperCase(), value: newVal, service: "Custom",
-      domains: [], ttl: 30, visible: false, created: "just now"
-    }]);
-    setNewKey(""); setNewVal("");
+    setSaving(true);
+    setError(null);
+    try {
+      await createSecret({
+        name: newKey.toUpperCase(),
+        service: "Custom",
+        secret_type: "api_key",
+        plaintext_value: newVal,
+      });
+      setNewKey(""); setNewVal("");
+      await refreshSecrets();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to save key");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const removeSecret = (id: number) => setSecrets(secrets.filter(s => s.id !== id));
+  const removeSecret = async (id: string) => {
+    setError(null);
+    try {
+      await deleteSecret(id);
+      await refreshSecrets();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to delete key");
+    }
+  };
 
   const addFolder = () => {
     if (!newPath) return;
@@ -96,8 +117,8 @@ const SimpleDashboard = ({ secrets, setSecrets, grants, setGrants, onSwitchToExp
 
   const removeFolder = (id: number) => setGrants(grants.filter(g => g.id !== id));
 
-  const copyRef = (name: string) => {
-    navigator.clipboard.writeText(`bk://${name.toLowerCase().replace(/_/g, "-")}`);
+  const copyRef = (vaultRef: string, name: string) => {
+    navigator.clipboard.writeText(vaultRef);
     setCopied(name);
     setTimeout(() => setCopied(null), 2000);
   };
@@ -121,6 +142,21 @@ const SimpleDashboard = ({ secrets, setSecrets, grants, setGrants, onSwitchToExp
         </p>
       </div>
 
+      {error && (
+        <div style={{
+          padding: "10px 14px", marginBottom: 16, borderRadius: 8,
+          background: tokens.status.lockedSubtle, color: tokens.status.locked,
+          border: `1px solid rgba(239,68,68,0.25)`, fontSize: 13,
+          display: "flex", alignItems: "center", gap: 8,
+        }}>
+          <AlertTriangle size={14} /> {error}
+          <button onClick={() => setError(null)} style={{
+            marginLeft: "auto", background: "none", border: "none",
+            color: tokens.status.locked, cursor: "pointer", padding: 2,
+          }}><X size={14} /></button>
+        </div>
+      )}
+
       {/* ─── API Keys Section ─── */}
       <div style={{ marginBottom: 40 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
@@ -136,7 +172,11 @@ const SimpleDashboard = ({ secrets, setSecrets, grants, setGrants, onSwitchToExp
           border: `1px solid ${tokens.border.default}`, borderRadius: 12,
           overflow: "hidden", marginBottom: 12,
         }}>
-          {secrets.length === 0 ? (
+          {loading ? (
+            <div style={{ padding: 24, textAlign: "center", color: tokens.text.tertiary, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Loading...
+            </div>
+          ) : secrets.length === 0 ? (
             <div style={{ padding: 24, textAlign: "center", color: tokens.text.tertiary, fontSize: 14 }}>
               No API keys yet. Add one below.
             </div>
@@ -160,10 +200,10 @@ const SimpleDashboard = ({ secrets, setSecrets, grants, setGrants, onSwitchToExp
                     {s.name}
                   </div>
                   <div style={{ fontSize: 12, color: tokens.text.tertiary, marginTop: 2 }}>
-                    {s.service} · Added {s.created}
+                    {s.service} · Added {new Date(s.created_at).toLocaleDateString()}
                   </div>
                 </div>
-                <button onClick={() => copyRef(s.name)} style={{
+                <button onClick={() => copyRef(s.vault_ref, s.name)} style={{
                   background: "none", border: "none", cursor: "pointer", padding: 8,
                   color: copied === s.name ? tokens.accent.base : tokens.text.tertiary,
                   transition: "color 150ms",
@@ -211,15 +251,15 @@ const SimpleDashboard = ({ secrets, setSecrets, grants, setGrants, onSwitchToExp
               fontSize: 13, color: tokens.text.primary,
             }}
           />
-          <button onClick={addSecret} disabled={!newKey || !newVal} style={{
+          <button onClick={addSecret} disabled={!newKey || !newVal || saving} style={{
             display: "flex", alignItems: "center", gap: 6, padding: "0 20px",
-            background: newKey && newVal ? tokens.accent.base : tokens.bg.elevated,
-            color: newKey && newVal ? tokens.text.inverse : tokens.text.tertiary,
+            background: newKey && newVal && !saving ? tokens.accent.base : tokens.bg.elevated,
+            color: newKey && newVal && !saving ? tokens.text.inverse : tokens.text.tertiary,
             border: "none", borderRadius: 8, fontSize: 14, fontWeight: 500,
-            cursor: newKey && newVal ? "pointer" : "default",
+            cursor: newKey && newVal && !saving ? "pointer" : "default",
             transition: "all 150ms",
           }}>
-            <Plus size={16} /> Add
+            {saving ? <><Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Saving...</> : <><Plus size={16} /> Add</>}
           </button>
         </div>
       </div>
@@ -346,6 +386,17 @@ const SimpleDashboard = ({ secrets, setSecrets, grants, setGrants, onSwitchToExp
           Sessions, audit logs, policies, and advanced settings
         </p>
       </div>
+
+      {/* Logout */}
+      <div style={{ textAlign: "center", paddingTop: 24 }}>
+        <button onClick={onLogout} style={{
+          display: "inline-flex", alignItems: "center", gap: 6,
+          padding: "8px 16px", background: "none", border: "none",
+          color: tokens.text.tertiary, fontSize: 12, cursor: "pointer",
+        }}>
+          <LogOut size={14} /> Log out
+        </button>
+      </div>
     </div>
   );
 };
@@ -355,29 +406,71 @@ const SimpleDashboard = ({ secrets, setSecrets, grants, setGrants, onSwitchToExp
 // ═══════════════════════════════════════════════════════════════════════════
 
 interface SecretsPageProps {
-  secrets: SecretEntry[];
-  setSecrets: React.Dispatch<React.SetStateAction<SecretEntry[]>>;
+  secrets: SecretMetadata[];
+  refreshSecrets: () => Promise<void>;
+  loading: boolean;
 }
 
-const SecretsPage = ({ secrets, setSecrets }: SecretsPageProps) => {
+const SecretsPage = ({ secrets, refreshSecrets, loading }: SecretsPageProps) => {
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
   const [newDomain, setNewDomain] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [rotateId, setRotateId] = useState<string | null>(null);
+  const [rotateVal, setRotateVal] = useState("");
 
-  const addSecret = () => {
+  const addSecret = async () => {
     if (!newKey || !newVal) return;
-    setSecrets([...secrets, {
-      id: Date.now(), name: newKey, value: newVal, service: "Custom",
-      domains: newDomain ? [newDomain] : [], ttl: 30, visible: false, created: "just now"
-    }]);
-    setNewKey(""); setNewVal(""); setNewDomain("");
+    setSaving(true);
+    setError(null);
+    try {
+      await createSecret({
+        name: newKey,
+        service: "Custom",
+        secret_type: "api_key",
+        plaintext_value: newVal,
+        allowed_domains: newDomain ? [newDomain] : undefined,
+      });
+      setNewKey(""); setNewVal(""); setNewDomain("");
+      await refreshSecrets();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to save secret");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const removeSecret = (id: number) => setSecrets(secrets.filter(s => s.id !== id));
-  const toggleVisible = (id: number) => setSecrets(secrets.map(s => s.id === id ? { ...s, visible: !s.visible } : s));
-  const copyRef = (name: string) => { setCopied(name); setTimeout(() => setCopied(null), 2000); };
+  const removeSecretHandler = async (id: string) => {
+    setError(null);
+    try {
+      await deleteSecret(id);
+      await refreshSecrets();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to delete secret");
+    }
+  };
+
+  const handleRotate = async (id: string) => {
+    if (!rotateVal) return;
+    setError(null);
+    try {
+      await rotateSecret(id, rotateVal);
+      setRotateId(null);
+      setRotateVal("");
+      await refreshSecrets();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to rotate secret");
+    }
+  };
+
+  const copyRef = (vaultRef: string, name: string) => {
+    navigator.clipboard.writeText(vaultRef);
+    setCopied(name);
+    setTimeout(() => setCopied(null), 2000);
+  };
 
   return (
     <div>
@@ -387,6 +480,21 @@ const SecretsPage = ({ secrets, setSecrets }: SecretsPageProps) => {
           API keys and tokens with domain restrictions and injection TTLs.
         </p>
       </div>
+
+      {error && (
+        <div style={{
+          padding: "10px 14px", marginBottom: 16, borderRadius: 8,
+          background: tokens.status.lockedSubtle, color: tokens.status.locked,
+          border: `1px solid rgba(239,68,68,0.25)`, fontSize: 13,
+          display: "flex", alignItems: "center", gap: 8,
+        }}>
+          <AlertTriangle size={14} /> {error}
+          <button onClick={() => setError(null)} style={{
+            marginLeft: "auto", background: "none", border: "none",
+            color: tokens.status.locked, cursor: "pointer", padding: 2,
+          }}><X size={14} /></button>
+        </div>
+      )}
 
       <div style={{ border: `1px solid ${tokens.border.default}`, borderRadius: 8, overflow: "hidden" }}>
         <div style={{
@@ -399,7 +507,11 @@ const SecretsPage = ({ secrets, setSecrets }: SecretsPageProps) => {
           <span>Name</span><span>Vault Reference</span><span>Domains</span><span>TTL</span><span></span>
         </div>
 
-        {secrets.map((s, i) => (
+        {loading ? (
+          <div style={{ padding: 24, textAlign: "center", color: tokens.text.tertiary, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Loading...
+          </div>
+        ) : secrets.map((s, i) => (
           <div key={s.id}>
             <div
               onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
@@ -419,9 +531,9 @@ const SecretsPage = ({ secrets, setSecrets }: SecretsPageProps) => {
               </span>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.tertiary }}>
-                  bk://{s.name.toLowerCase().replace(/_/g, "-")}
+                  {s.vault_ref}
                 </span>
-                <button onClick={(e) => { e.stopPropagation(); copyRef(s.name); }} style={{
+                <button onClick={(e) => { e.stopPropagation(); copyRef(s.vault_ref, s.name); }} style={{
                   background: "none", border: "none", cursor: "pointer", padding: 2,
                   color: copied === s.name ? tokens.accent.base : tokens.text.tertiary,
                 }}>
@@ -429,10 +541,10 @@ const SecretsPage = ({ secrets, setSecrets }: SecretsPageProps) => {
                 </button>
               </div>
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {s.domains.map((d, di) => <Badge key={di} color="gray">{d}</Badge>)}
+                {(s.allowed_domains ?? []).map((d, di) => <Badge key={di} color="gray">{d}</Badge>)}
               </div>
-              <span style={{ fontSize: 12, color: tokens.text.secondary }}>{s.ttl}m</span>
-              <button onClick={(e) => { e.stopPropagation(); removeSecret(s.id); }} style={{
+              <span style={{ fontSize: 12, color: tokens.text.secondary }}>{Math.round(s.injection_ttl_seconds / 60)}m</span>
+              <button onClick={(e) => { e.stopPropagation(); removeSecretHandler(s.id); }} style={{
                 background: "none", border: "none", cursor: "pointer", padding: 4, color: tokens.text.tertiary,
               }}>
                 <X size={16} />
@@ -446,41 +558,60 @@ const SecretsPage = ({ secrets, setSecrets }: SecretsPageProps) => {
                 display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16,
               }}>
                 <div>
-                  <label style={{ fontSize: 11, color: tokens.text.tertiary, textTransform: "uppercase", letterSpacing: "0.04em" }}>Value</label>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-                    <div style={{
-                      flex: 1, padding: "8px 12px", borderRadius: 6,
-                      background: tokens.bg.input, border: `1px solid ${tokens.border.default}`,
-                      fontFamily: "'Geist Mono', monospace", fontSize: 13, color: tokens.text.primary,
-                    }}>
-                      {s.visible ? s.value : "\u2022".repeat(24)}
-                    </div>
-                    <button onClick={() => toggleVisible(s.id)} style={{
-                      background: "none", border: "none", cursor: "pointer", padding: 4, color: tokens.text.tertiary,
-                    }}>
-                      {s.visible ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                </div>
-                <div>
                   <label style={{ fontSize: 11, color: tokens.text.tertiary, textTransform: "uppercase", letterSpacing: "0.04em" }}>Service</label>
                   <div style={{ marginTop: 6, fontSize: 14, color: tokens.text.primary }}>{s.service}</div>
                 </div>
-                <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, paddingTop: 8 }}>
-                  <button style={{
-                    display: "flex", alignItems: "center", gap: 6, padding: "6px 12px",
-                    background: "none", border: `1px solid ${tokens.border.default}`,
-                    borderRadius: 6, color: tokens.text.secondary, fontSize: 13, cursor: "pointer",
-                  }}>
-                    <RefreshCw size={14} /> Rotate
-                  </button>
-                  <button style={{
-                    display: "flex", alignItems: "center", gap: 6, padding: "6px 12px",
-                    background: "none", border: `1px solid ${tokens.border.default}`,
-                    borderRadius: 6, color: tokens.text.secondary, fontSize: 13, cursor: "pointer",
-                  }}>
-                    <Settings size={14} /> Edit Policy
-                  </button>
+                <div>
+                  <label style={{ fontSize: 11, color: tokens.text.tertiary, textTransform: "uppercase", letterSpacing: "0.04em" }}>Type</label>
+                  <div style={{ marginTop: 6, fontSize: 14, color: tokens.text.primary }}>{s.secret_type}</div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: tokens.text.tertiary, textTransform: "uppercase", letterSpacing: "0.04em" }}>Created</label>
+                  <div style={{ marginTop: 6, fontSize: 14, color: tokens.text.primary }}>{new Date(s.created_at).toLocaleString()}</div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: tokens.text.tertiary, textTransform: "uppercase", letterSpacing: "0.04em" }}>Last Rotated</label>
+                  <div style={{ marginTop: 6, fontSize: 14, color: tokens.text.primary }}>{new Date(s.rotated_at).toLocaleString()}</div>
+                </div>
+                <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, paddingTop: 8, alignItems: "center" }}>
+                  {rotateId === s.id ? (
+                    <>
+                      <input
+                        value={rotateVal}
+                        onChange={e => setRotateVal(e.target.value)}
+                        placeholder="New secret value..."
+                        type="password"
+                        style={{
+                          flex: 1, padding: "6px 12px", borderRadius: 6,
+                          border: `1px solid ${tokens.border.default}`,
+                          background: tokens.bg.input, color: tokens.text.primary, fontSize: 13, outline: "none",
+                        }}
+                      />
+                      <button onClick={() => handleRotate(s.id)} disabled={!rotateVal} style={{
+                        display: "flex", alignItems: "center", gap: 6, padding: "6px 12px",
+                        background: rotateVal ? tokens.accent.base : tokens.bg.elevated,
+                        color: rotateVal ? tokens.text.inverse : tokens.text.tertiary,
+                        border: "none", borderRadius: 6, fontSize: 13, fontWeight: 500, cursor: rotateVal ? "pointer" : "default",
+                      }}>
+                        <Check size={14} /> Confirm
+                      </button>
+                      <button onClick={() => { setRotateId(null); setRotateVal(""); }} style={{
+                        display: "flex", alignItems: "center", gap: 6, padding: "6px 12px",
+                        background: "none", border: `1px solid ${tokens.border.default}`,
+                        borderRadius: 6, color: tokens.text.secondary, fontSize: 13, cursor: "pointer",
+                      }}>
+                        <X size={14} /> Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={() => setRotateId(s.id)} style={{
+                      display: "flex", alignItems: "center", gap: 6, padding: "6px 12px",
+                      background: "none", border: `1px solid ${tokens.border.default}`,
+                      borderRadius: 6, color: tokens.text.secondary, fontSize: 13, cursor: "pointer",
+                    }}>
+                      <RefreshCw size={14} /> Rotate
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -500,13 +631,14 @@ const SecretsPage = ({ secrets, setSecrets }: SecretsPageProps) => {
             padding: "8px 12px", borderRadius: 6, border: `1px solid ${tokens.border.default}`,
             background: tokens.bg.input, color: tokens.text.secondary, fontSize: 12, outline: "none",
           }} />
-          <button onClick={addSecret} style={{
+          <button onClick={addSecret} disabled={saving} style={{
             display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
-            background: newKey && newVal ? tokens.accent.base : tokens.bg.elevated,
-            color: newKey && newVal ? tokens.text.inverse : tokens.text.tertiary,
-            border: "none", borderRadius: 6, fontSize: 13, fontWeight: 500, cursor: newKey && newVal ? "pointer" : "default",
+            background: newKey && newVal && !saving ? tokens.accent.base : tokens.bg.elevated,
+            color: newKey && newVal && !saving ? tokens.text.inverse : tokens.text.tertiary,
+            border: "none", borderRadius: 6, fontSize: 13, fontWeight: 500,
+            cursor: newKey && newVal && !saving ? "pointer" : "default",
           }}>
-            <Plus size={14} /> Add
+            {saving ? <><Loader size={14} style={{ animation: "spin 1s linear infinite" }} /> Saving...</> : <><Plus size={14} /> Add</>}
           </button>
         </div>
       </div>
@@ -798,27 +930,473 @@ const AuditPage = () => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SECURITY PAGE (2FA settings)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SecurityPage = () => {
+  const [totpEnabled, setTotpEnabled] = useState<boolean | null>(null);
+  const [setupData, setSetupData] = useState<{ otpauth_uri: string; secret: string } | null>(null);
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    getTotpStatus().then(s => setTotpEnabled(s.totp_enabled)).catch(() => {});
+  }, []);
+
+  const handleSetup = async () => {
+    setError(null);
+    try {
+      const data = await setupTotp();
+      setSetupData(data);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to start 2FA setup");
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (!code) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await confirmTotp(code);
+      setTotpEnabled(true);
+      setSetupData(null);
+      setCode("");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Invalid code");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDisable = async () => {
+    if (!code) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await disableTotp(code);
+      setTotpEnabled(false);
+      setCode("");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Invalid code");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 32 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 600, color: tokens.text.primary, margin: 0 }}>Security</h1>
+        <p style={{ fontSize: 14, color: tokens.text.secondary, margin: "6px 0 0" }}>
+          Two-factor authentication and account security.
+        </p>
+      </div>
+
+      {error && (
+        <div style={{
+          padding: "10px 14px", marginBottom: 16, borderRadius: 8,
+          background: tokens.status.lockedSubtle, color: tokens.status.locked,
+          border: `1px solid rgba(239,68,68,0.25)`, fontSize: 13,
+          display: "flex", alignItems: "center", gap: 8,
+        }}>
+          <AlertTriangle size={14} /> {error}
+          <button onClick={() => setError(null)} style={{
+            marginLeft: "auto", background: "none", border: "none",
+            color: tokens.status.locked, cursor: "pointer", padding: 2,
+          }}><X size={14} /></button>
+        </div>
+      )}
+
+      <div style={{ border: `1px solid ${tokens.border.default}`, borderRadius: 8, overflow: "hidden" }}>
+        <div style={{
+          padding: "16px", display: "flex", alignItems: "center", justifyContent: "space-between",
+          borderBottom: setupData || totpEnabled ? `1px solid ${tokens.border.default}` : "none",
+        }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 500, color: tokens.text.primary, marginBottom: 4 }}>
+              Two-Factor Authentication (TOTP)
+            </div>
+            <div style={{ fontSize: 13, color: tokens.text.secondary }}>
+              {totpEnabled === null ? "Loading..." : totpEnabled
+                ? "Enabled — your account requires a code from your authenticator app on each login."
+                : "Not enabled — add an extra layer of security to your account."}
+            </div>
+          </div>
+          {totpEnabled === false && !setupData && (
+            <button onClick={handleSetup} style={{
+              display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
+              background: tokens.accent.base, color: tokens.text.inverse,
+              border: "none", borderRadius: 6, fontSize: 13, fontWeight: 500, cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}>
+              <Shield size={14} /> Enable 2FA
+            </button>
+          )}
+          {totpEnabled === true && (
+            <Badge color="accent">Enabled</Badge>
+          )}
+        </div>
+
+        {/* Setup flow — show secret for authenticator app */}
+        {setupData && !totpEnabled && (
+          <div style={{ padding: "16px", borderBottom: `1px solid ${tokens.border.default}` }}>
+            <div style={{ fontSize: 13, color: tokens.text.secondary, marginBottom: 12 }}>
+              Add this account to your authenticator app (Google Authenticator, Authy, etc.):
+            </div>
+            <div style={{
+              padding: "12px 16px", borderRadius: 8, background: tokens.bg.input,
+              border: `1px solid ${tokens.border.default}`, marginBottom: 16,
+            }}>
+              <div style={{ fontSize: 11, color: tokens.text.tertiary, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
+                Manual Entry Key
+              </div>
+              <div style={{
+                fontFamily: "'Geist Mono', monospace", fontSize: 14, color: tokens.accent.base,
+                wordBreak: "break-all", letterSpacing: "0.05em",
+              }}>
+                {setupData.secret}
+              </div>
+            </div>
+            <div style={{ fontSize: 13, color: tokens.text.secondary, marginBottom: 12 }}>
+              Then enter the 6-digit code to confirm setup:
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                value={code}
+                onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="000000"
+                style={{
+                  width: 140, padding: "10px 14px", borderRadius: 8,
+                  background: tokens.bg.input, border: `1px solid ${tokens.border.default}`,
+                  color: tokens.text.primary, fontSize: 18, fontWeight: 600,
+                  fontFamily: "'Geist Mono', monospace", textAlign: "center",
+                  letterSpacing: "0.2em", outline: "none",
+                }}
+              />
+              <button onClick={handleConfirm} disabled={code.length !== 6 || submitting} style={{
+                display: "flex", alignItems: "center", gap: 6, padding: "10px 16px",
+                background: code.length === 6 && !submitting ? tokens.accent.base : tokens.bg.elevated,
+                color: code.length === 6 && !submitting ? tokens.text.inverse : tokens.text.tertiary,
+                border: "none", borderRadius: 8, fontSize: 14, fontWeight: 500,
+                cursor: code.length === 6 && !submitting ? "pointer" : "default",
+              }}>
+                {submitting ? <Loader size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Check size={14} />} Confirm
+              </button>
+              <button onClick={() => { setSetupData(null); setCode(""); }} style={{
+                padding: "10px 16px", background: "none",
+                border: `1px solid ${tokens.border.default}`,
+                borderRadius: 8, fontSize: 14, color: tokens.text.secondary, cursor: "pointer",
+              }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Disable flow */}
+        {totpEnabled === true && (
+          <div style={{ padding: "16px" }}>
+            <div style={{ fontSize: 13, color: tokens.text.secondary, marginBottom: 12 }}>
+              To disable 2FA, enter a code from your authenticator app:
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                value={code}
+                onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="000000"
+                style={{
+                  width: 140, padding: "10px 14px", borderRadius: 8,
+                  background: tokens.bg.input, border: `1px solid ${tokens.border.default}`,
+                  color: tokens.text.primary, fontSize: 18, fontWeight: 600,
+                  fontFamily: "'Geist Mono', monospace", textAlign: "center",
+                  letterSpacing: "0.2em", outline: "none",
+                }}
+              />
+              <button onClick={handleDisable} disabled={code.length !== 6 || submitting} style={{
+                display: "flex", alignItems: "center", gap: 6, padding: "10px 16px",
+                background: code.length === 6 && !submitting ? tokens.status.locked : tokens.bg.elevated,
+                color: code.length === 6 && !submitting ? "#fff" : tokens.text.tertiary,
+                border: "none", borderRadius: 8, fontSize: 14, fontWeight: 500,
+                cursor: code.length === 6 && !submitting ? "pointer" : "default",
+              }}>
+                {submitting ? <Loader size={14} style={{ animation: "spin 1s linear infinite" }} /> : <X size={14} />} Disable 2FA
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOGIN / REGISTER SCREEN
+// ═══════════════════════════════════════════════════════════════════════════
+
+const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isRegister, setIsRegister] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // TOTP verification state
+  const [totpToken, setTotpToken] = useState<string | null>(null);
+  const [totpCode, setTotpCode] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      if (isRegister) {
+        await register(email, password);
+        onSuccess();
+      } else {
+        const result = await login(email, password);
+        if (result.requires_totp && result.totp_token) {
+          setTotpToken(result.totp_token);
+        } else {
+          onSuccess();
+        }
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Authentication failed");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleTotpVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!totpToken || !totpCode) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await verifyTotp(totpToken, totpCode);
+      onSuccess();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Invalid code");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const wrapper = (children: React.ReactNode) => (
+    <div style={{
+      minHeight: "100vh", background: tokens.bg.root,
+      fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, sans-serif",
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }}>
+      <div style={{ width: 380, padding: 24 }}>
+        <div style={{ textAlign: "center", marginBottom: 40 }}>
+          <div style={{
+            width: 56, height: 56, borderRadius: 16, margin: "0 auto 16px",
+            background: `linear-gradient(135deg, ${tokens.accent.base}, #00a85a)`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <Shield size={28} style={{ color: tokens.text.inverse }} />
+          </div>
+          <h1 style={{ fontSize: 28, fontWeight: 600, color: tokens.text.primary, margin: "0 0 8px" }}>
+            BlindKey
+          </h1>
+        </div>
+
+        {error && (
+          <div style={{
+            padding: "10px 14px", marginBottom: 16, borderRadius: 8,
+            background: tokens.status.lockedSubtle, color: tokens.status.locked,
+            border: `1px solid rgba(239,68,68,0.25)`, fontSize: 13,
+            display: "flex", alignItems: "center", gap: 8,
+          }}>
+            <AlertTriangle size={14} /> {error}
+          </div>
+        )}
+
+        {children}
+      </div>
+    </div>
+  );
+
+  // TOTP verification step
+  if (totpToken) {
+    return wrapper(
+      <>
+        <p style={{ fontSize: 15, color: tokens.text.secondary, margin: "0 0 24px", textAlign: "center" }}>
+          Enter the 6-digit code from your authenticator app
+        </p>
+        <form onSubmit={handleTotpVerify}>
+          <div style={{ marginBottom: 24 }}>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={totpCode}
+              onChange={e => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              placeholder="000000"
+              autoFocus
+              style={{
+                width: "100%", padding: "16px 14px", borderRadius: 8,
+                background: tokens.bg.input, border: `1px solid ${tokens.border.default}`,
+                color: tokens.text.primary, fontSize: 24, fontWeight: 600,
+                fontFamily: "'Geist Mono', monospace", textAlign: "center",
+                letterSpacing: "0.3em", outline: "none", boxSizing: "border-box",
+              }}
+            />
+          </div>
+          <button type="submit" disabled={totpCode.length !== 6 || submitting} style={{
+            width: "100%", padding: "12px", borderRadius: 8,
+            background: totpCode.length === 6 && !submitting ? tokens.accent.base : tokens.bg.elevated,
+            color: totpCode.length === 6 && !submitting ? tokens.text.inverse : tokens.text.tertiary,
+            border: "none", fontSize: 15, fontWeight: 600,
+            cursor: totpCode.length === 6 && !submitting ? "pointer" : "default",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          }}>
+            {submitting ? <><Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Verifying...</> : "Verify"}
+          </button>
+        </form>
+        <div style={{ textAlign: "center", marginTop: 20 }}>
+          <button onClick={() => { setTotpToken(null); setTotpCode(""); setError(null); }} style={{
+            background: "none", border: "none", color: tokens.text.secondary,
+            fontSize: 13, cursor: "pointer", textDecoration: "underline",
+            textDecorationColor: tokens.border.hover,
+          }}>
+            Back to login
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  // Email/password login
+  return wrapper(
+    <>
+      <p style={{ fontSize: 15, color: tokens.text.secondary, margin: "-24px 0 24px", textAlign: "center" }}>
+        {isRegister ? "Create your account" : "Sign in to your vault"}
+      </p>
+      <form onSubmit={handleSubmit}>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: "block", fontSize: 12, color: tokens.text.secondary, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Email
+          </label>
+          <input
+            type="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder="you@example.com"
+            autoComplete="email"
+            style={{
+              width: "100%", padding: "12px 14px", borderRadius: 8,
+              background: tokens.bg.input, border: `1px solid ${tokens.border.default}`,
+              color: tokens.text.primary, fontSize: 14, outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+        </div>
+        <div style={{ marginBottom: 24 }}>
+          <label style={{ display: "block", fontSize: 12, color: tokens.text.secondary, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Password
+          </label>
+          <input
+            type="password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            placeholder={isRegister ? "Min 8 characters" : "Your password"}
+            autoComplete={isRegister ? "new-password" : "current-password"}
+            style={{
+              width: "100%", padding: "12px 14px", borderRadius: 8,
+              background: tokens.bg.input, border: `1px solid ${tokens.border.default}`,
+              color: tokens.text.primary, fontSize: 14, outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+        </div>
+        <button type="submit" disabled={!email || !password || submitting} style={{
+          width: "100%", padding: "12px", borderRadius: 8,
+          background: email && password && !submitting ? tokens.accent.base : tokens.bg.elevated,
+          color: email && password && !submitting ? tokens.text.inverse : tokens.text.tertiary,
+          border: "none", fontSize: 15, fontWeight: 600, cursor: email && password && !submitting ? "pointer" : "default",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+        }}>
+          {submitting ? <><Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> {isRegister ? "Creating..." : "Signing in..."}</> : isRegister ? "Create Account" : "Sign In"}
+        </button>
+      </form>
+
+      <div style={{ textAlign: "center", marginTop: 20 }}>
+        <button onClick={() => { setIsRegister(!isRegister); setError(null); }} style={{
+          background: "none", border: "none", color: tokens.text.secondary,
+          fontSize: 13, cursor: "pointer", textDecoration: "underline",
+          textDecorationColor: tokens.border.hover,
+        }}>
+          {isRegister ? "Already have an account? Sign in" : "Need an account? Register"}
+        </button>
+      </div>
+    </>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN DASHBOARD - Mode Toggle
 // ═══════════════════════════════════════════════════════════════════════════
 
-type PageId = "secrets" | "filesystem" | "sessions" | "audit";
+type PageId = "secrets" | "filesystem" | "sessions" | "audit" | "security";
 
 export default function BlindKeyDashboard() {
+  const [authed, setAuthed] = useState(isLoggedIn());
   const [expertMode, setExpertMode] = useState(false);
   const [activePage, setActivePage] = useState<PageId>("secrets");
   const [sidebarHover, setSidebarHover] = useState<string | null>(null);
 
-  // Shared state between simple and expert modes
-  const [secrets, setSecrets] = useState<SecretEntry[]>([
-    { id: 1, name: "STRIPE_PROD_KEY", value: "sk_live_51Hx...a8Ks", service: "Stripe", domains: ["api.stripe.com"], ttl: 30, visible: false, created: "2 days ago" },
-    { id: 2, name: "GITHUB_PAT", value: "ghp_xK29...mNp4", service: "GitHub", domains: ["api.github.com"], ttl: 60, visible: false, created: "5 days ago" },
-    { id: 3, name: "OPENAI_API_KEY", value: "sk-proj-9x...wR2f", service: "OpenAI", domains: ["api.openai.com"], ttl: 30, visible: false, created: "1 week ago" },
-  ]);
+  // Secrets state — fetched from API
+  const [secrets, setSecrets] = useState<SecretMetadata[]>([]);
+  const [secretsLoading, setSecretsLoading] = useState(true);
 
+  // Filesystem grants (still client-side for now)
   const [grants, setGrants] = useState<FsGrant[]>([
     { id: 1, path: "/project/src", permission: "read", recursive: true, approval: false },
     { id: 2, path: "/project/output", permission: "write", recursive: true, approval: false },
   ]);
+
+  const refreshSecrets = useCallback(async () => {
+    try {
+      const data = await fetchSecrets();
+      setSecrets(data);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        setAuthed(false);
+      }
+    } finally {
+      setSecretsLoading(false);
+    }
+  }, []);
+
+  // Fetch secrets on mount
+  useEffect(() => {
+    if (authed) {
+      refreshSecrets();
+    }
+  }, [authed, refreshSecrets]);
+
+  const handleLogout = () => {
+    clearToken();
+    setAuthed(false);
+    setSecrets([]);
+  };
+
+  // Not logged in — show login screen
+  if (!authed) {
+    return <LoginScreen onSuccess={() => setAuthed(true)} />;
+  }
 
   // Simple mode
   if (!expertMode) {
@@ -830,10 +1408,12 @@ export default function BlindKeyDashboard() {
       }}>
         <SimpleDashboard
           secrets={secrets}
-          setSecrets={setSecrets}
+          refreshSecrets={refreshSecrets}
+          loading={secretsLoading}
           grants={grants}
           setGrants={setGrants}
           onSwitchToExpert={() => setExpertMode(true)}
+          onLogout={handleLogout}
         />
       </div>
     );
@@ -845,13 +1425,15 @@ export default function BlindKeyDashboard() {
     { id: "filesystem", label: "Filesystem", icon: FolderOpen },
     { id: "sessions", label: "Sessions", icon: Shield },
     { id: "audit", label: "Audit Log", icon: Activity },
+    { id: "security", label: "Security", icon: Lock },
   ];
 
   const pages: Record<PageId, React.ReactNode> = {
-    secrets: <SecretsPage secrets={secrets} setSecrets={setSecrets} />,
+    secrets: <SecretsPage secrets={secrets} refreshSecrets={refreshSecrets} loading={secretsLoading} />,
     filesystem: <FilesystemPage grants={grants} setGrants={setGrants} />,
     sessions: <SessionsPage />,
     audit: <AuditPage />,
+    security: <SecurityPage />,
   };
 
   return (
@@ -915,14 +1497,21 @@ export default function BlindKeyDashboard() {
           })}
         </nav>
 
-        {/* Switch to Simple */}
-        <div style={{ padding: "12px 16px", borderTop: `1px solid ${tokens.border.default}` }}>
+        {/* Bottom sidebar actions */}
+        <div style={{ padding: "12px 16px", borderTop: `1px solid ${tokens.border.default}`, display: "flex", flexDirection: "column", gap: 8 }}>
           <button onClick={() => setExpertMode(false)} style={{
             width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
             padding: "8px", background: "none", border: `1px solid ${tokens.border.default}`,
             borderRadius: 6, color: tokens.text.secondary, fontSize: 12, cursor: "pointer",
           }}>
             Switch to Simple Mode
+          </button>
+          <button onClick={handleLogout} style={{
+            width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            padding: "8px", background: "none", border: "none",
+            color: tokens.text.tertiary, fontSize: 12, cursor: "pointer",
+          }}>
+            <LogOut size={14} /> Log out
           </button>
         </div>
       </div>

@@ -36,3 +36,8 @@ select option {
   background: #111111;
   color: #fafafa;
 }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
