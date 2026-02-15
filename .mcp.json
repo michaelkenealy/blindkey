@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "blindkey": {
+      "type": "stdio",
+      "command": "bk",
+      "args": ["serve"],
+      "env": {}
+    }
+  }
+}

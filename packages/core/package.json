@@ -1,7 +1,7 @@
 {
   "name": "@blindkey/core",
   "version": "0.1.0",
-  "private": true,
+  "description": "Core cryptographic primitives and types for BlindKey credential management",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -11,10 +11,37 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "encryption",
+    "aes-256-gcm",
+    "credentials",
+    "security",
+    "cryptography",
+    "policy",
+    "audit"
+  ],
+  "author": "Michael Kenealy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michaelkenealy/blindkey.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/michaelkenealy/blindkey#readme",
+  "bugs": {
+    "url": "https://github.com/michaelkenealy/blindkey/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

@@ -1,15 +1,42 @@
 {
   "name": "@blindkey/local-vault",
   "version": "0.1.0",
-  "private": true,
+  "description": "Local SQLite-based encrypted vault for BlindKey credential storage",
   "type": "module",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "vault",
+    "sqlite",
+    "encryption",
+    "credentials",
+    "secrets",
+    "local-storage"
+  ],
+  "author": "Michael Kenealy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michaelkenealy/blindkey.git",
+    "directory": "packages/local-vault"
+  },
+  "homepage": "https://github.com/michaelkenealy/blindkey#readme",
+  "bugs": {
+    "url": "https://github.com/michaelkenealy/blindkey/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
-    "@blindkey/core": "*",
+    "@blindkey/core": "0.1.0",
     "better-sqlite3": "^11.7.0"
   },
   "devDependencies": {

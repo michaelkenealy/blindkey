@@ -1,16 +1,45 @@
 {
   "name": "@blindkey/openclaw-skill",
   "version": "0.1.0",
-  "private": true,
+  "description": "MCP server for BlindKey - secure credential injection and filesystem gating for AI agents",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "blindkey-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "ai-agents",
+    "credentials",
+    "security",
+    "vault"
+  ],
+  "author": "Michael Kenealy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michaelkenealy/blindkey.git",
+    "directory": "packages/openclaw-skill"
+  },
+  "homepage": "https://github.com/michaelkenealy/blindkey#readme",
+  "bugs": {
+    "url": "https://github.com/michaelkenealy/blindkey/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
-    "@blindkey/core": "*",
-    "@blindkey/local-vault": "*",
+    "@blindkey/core": "0.1.0",
+    "@blindkey/local-vault": "0.1.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "zod": "^3.24.0"
   },
