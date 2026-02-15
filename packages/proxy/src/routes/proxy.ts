@@ -21,6 +21,7 @@ interface ProxyRequestBody {
   url: string;
   headers?: Record<string, string>;
   body?: unknown;
+  approval_id?: string;
 }
 
 export function registerProxyRoutes(app: FastifyInstance, db: Pool, redis: Redis, vaultBackend: VaultBackend) {
@@ -30,7 +31,7 @@ export function registerProxyRoutes(app: FastifyInstance, db: Pool, redis: Redis
   app.post<{ Body: ProxyRequestBody }>('/v1/proxy/request', async (request, reply) => {
     const startTime = Date.now();
     const session = request.session!;
-    const { vault_ref, method, url, headers: agentHeaders, body: agentBody } = request.body;
+    const { vault_ref, method, url, headers: agentHeaders, body: agentBody, approval_id } = request.body;
 
     // Validate the agent can access this secret
     if (!session.allowed_secrets.includes(vault_ref)) {
@@ -76,15 +77,16 @@ export function registerProxyRoutes(app: FastifyInstance, db: Pool, redis: Redis
     // Enforce policies
     let policyChecked: string[] = [];
     try {
-      const policyResult = await policy.enforce(session, proxyRequest);
+      const policyResult = await policy.enforce(session, proxyRequest, approval_id);
       policyChecked = policyResult.checked;
     } catch (err) {
       const avErr = err as BlindKeyError;
+      const action = avErr.code === 'approval_required' ? 'approval_requested' : 'request_denied';
       await audit.log({
         user_id: session.user_id,
         session_id: session.id,
         vault_ref,
-        action: 'request_denied',
+        action,
         request_summary: { method, url, body_hash: hashBody(agentBody) },
         policy_result: { blocking_policy: (err as { policy?: string }).policy ?? avErr.code, checked: policyChecked },
       });
@@ -134,7 +136,7 @@ export function registerProxyRoutes(app: FastifyInstance, db: Pool, redis: Redis
       responseBody = await targetResponse.text();
     }
 
-    // Sanitize response — strip any leaked secrets
+    // Sanitize response - strip any leaked secrets
     responseBody = sanitizeResponse(responseBody, plaintext);
 
     // Build response headers (exclude hop-by-hop headers)

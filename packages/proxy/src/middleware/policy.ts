@@ -1,7 +1,7 @@
 import type { Pool } from 'pg';
 import type { Redis } from 'ioredis';
-import type { AgentSession, ProxyRequest, PolicySet, RateLimitRule } from '@blindkey/core';
-import { evaluatePolicy, RateLimitError, PolicyDeniedError } from '@blindkey/core';
+import type { AgentSession, ProxyRequest, PolicySet, RateLimitRule, HumanApprovalRule } from '@blindkey/core';
+import { evaluatePolicy, RateLimitError, PolicyDeniedError, ApprovalRequiredError } from '@blindkey/core';
 
 // Environment variable to control fail-closed behavior
 // Set POLICY_FAIL_OPEN=true to allow sessions without policies (NOT RECOMMENDED)
@@ -13,7 +13,7 @@ export class PolicyMiddleware {
     private redis: Redis
   ) {}
 
-  async enforce(session: AgentSession, proxyRequest: ProxyRequest): Promise<{
+  async enforce(session: AgentSession, proxyRequest: ProxyRequest, approvalId?: string): Promise<{
     checked: string[];
     blocking_policy: string | null;
   }> {
@@ -76,10 +76,57 @@ export class PolicyMiddleware {
       }
     }
 
-    return {
-      checked: evalResult.checked,
-      blocking_policy: null,
-    };
+    const humanApprovalRule = rules.find((rule): rule is HumanApprovalRule => rule.type === 'human_approval');
+    if (!humanApprovalRule) {
+      return {
+        checked: evalResult.checked,
+        blocking_policy: null,
+      };
+    }
+
+    if (approvalId) {
+      const approval = await this.db.query(
+        `SELECT id
+         FROM approval_queue
+         WHERE id = $1
+           AND user_id = $2
+           AND session_id = $3
+           AND vault_ref = $4
+           AND status = 'approved'
+           AND expires_at > now()`,
+        [approvalId, session.user_id, session.id, proxyRequest.vault_ref]
+      );
+
+      if (approval.rows.length === 0) {
+        throw new PolicyDeniedError('human_approval', 'Missing, invalid, or expired approval token');
+      }
+
+      return {
+        checked: [...evalResult.checked, 'human_approval'],
+        blocking_policy: null,
+      };
+    }
+
+    const expiresAt = new Date(Date.now() + humanApprovalRule.timeout_seconds * 1000);
+    const approvalInsert = await this.db.query(
+      `INSERT INTO approval_queue (user_id, session_id, vault_ref, request_payload, policy_trigger, status, expires_at)
+       VALUES ($1, $2, $3, $4, 'human_approval', 'pending', $5)
+       RETURNING id`,
+      [
+        session.user_id,
+        session.id,
+        proxyRequest.vault_ref,
+        JSON.stringify({
+          method: proxyRequest.method,
+          url: proxyRequest.url,
+          headers: proxyRequest.headers ?? {},
+          body: proxyRequest.body ?? null,
+        }),
+        expiresAt,
+      ]
+    );
+
+    throw new ApprovalRequiredError(approvalInsert.rows[0].id as string);
   }
 
   private async enforceRateLimit(
