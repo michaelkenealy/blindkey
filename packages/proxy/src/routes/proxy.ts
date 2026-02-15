@@ -3,11 +3,11 @@ import type { Pool } from 'pg';
 import type { Redis } from 'ioredis';
 import {
   AuthorizationError,
+  BlindKeyError,
   NotFoundError,
   ValidationError,
   hashBody,
   type ProxyRequest,
-  type BlindKeyError,
   type VaultBackend,
 } from '@blindkey/core';
 import { AuditService } from '../services/audit.js';
@@ -154,8 +154,8 @@ export function registerProxyRoutes(app: FastifyInstance, db: Pool, redis: Redis
         policy_result: { blocking_policy: 'injection_validation', checked: policyChecked },
       });
 
-      if ('statusCode' in (avErr as Record<string, unknown>)) {
-        return reply.code((avErr as BlindKeyError).statusCode).send((avErr as BlindKeyError).toJSON());
+      if (avErr instanceof BlindKeyError) {
+        return reply.code(avErr.statusCode).send(avErr.toJSON());
       }
 
       return reply.code(400).send({
