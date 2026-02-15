@@ -73,6 +73,9 @@ CREATE TABLE audit_log (
   policy_result   JSONB,
   response_status INT,
   latency_ms      INT,
+  prev_hash       TEXT,
+  entry_hash      TEXT,
+  signature       TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -80,6 +83,7 @@ CREATE INDEX idx_audit_log_user_id ON audit_log (user_id);
 CREATE INDEX idx_audit_log_session_id ON audit_log (session_id);
 CREATE INDEX idx_audit_log_created_at ON audit_log (created_at);
 CREATE INDEX idx_audit_log_vault_ref ON audit_log (vault_ref);
+CREATE INDEX idx_audit_log_entry_hash ON audit_log (entry_hash);
 
 -- Prevent updates and deletes on audit_log
 CREATE OR REPLACE FUNCTION prevent_audit_modification()
@@ -139,11 +143,15 @@ CREATE TABLE fs_audit_log (
   blocking_rule     TEXT,
   bytes_transferred BIGINT,
   file_hash         TEXT,
+  prev_hash         TEXT,
+  entry_hash        TEXT,
+  signature         TEXT,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_fs_audit_log_session_id ON fs_audit_log (session_id);
 CREATE INDEX idx_fs_audit_log_created_at ON fs_audit_log (created_at);
+CREATE INDEX idx_fs_audit_log_entry_hash ON fs_audit_log (entry_hash);
 
 CREATE TRIGGER fs_audit_log_no_update
   BEFORE UPDATE ON fs_audit_log
@@ -163,3 +171,4 @@ CREATE TABLE auth_login_attempts (
 );
 
 CREATE INDEX idx_auth_login_attempts_locked_until ON auth_login_attempts (locked_until);
+
