@@ -10,6 +10,22 @@ When AI agents make API calls on your behalf, they typically need direct access 
 - Agents could use credentials for unintended purposes
 - No audit trail of credential usage
 
+### How BlindKey Compares
+
+Other tools focus on credential injection. BlindKey goes further:
+
+| Feature | 1Password | Aquaman | OpenClaw-Secure | **BlindKey** |
+|---------|-----------|---------|-----------------|--------------|
+| Credential injection | Yes | Yes | Yes | **Yes** |
+| **Filesystem gating** | No | No | No | **Yes** |
+| **Content scanning** | No | No | No | **Yes** |
+| **Visual dashboard** | No | No | No | **Yes** |
+| **Policy engine** | No | No | No | **Yes** |
+
+BlindKey answers: *"What can the AI agent access?"* not just *"How does it authenticate?"*
+
+### How It Works
+
 BlindKey solves this with **blind credential injection**:
 
 ```
@@ -131,12 +147,17 @@ Add to your OpenClaw config:
 }
 ```
 
-The plugin registers two tools:
+The plugin registers these tools:
 
 | Tool | Description |
 |------|-------------|
 | `bk_proxy` | Make an authenticated API request (credential injected server-side) |
 | `bk_list_secrets` | List available secret references (values never shown) |
+| `bk_fs_read` | Read a file (requires explicit grant, sensitive paths blocked) |
+| `bk_fs_write` | Write a file (content scanned for leaked secrets) |
+| `bk_fs_list` | List directory contents (only unlocked directories) |
+| `bk_fs_info` | Get file/directory metadata |
+| `bk_list_grants` | Show unlocked paths and permissions |
 
 ### Usage with OpenClaw
 
@@ -149,19 +170,24 @@ Agent: (calls bk_proxy → credential injected → response returned)
 
 The dashboard can manage secrets and filesystem grants stored in `~/.blindkey/vault.db` without requiring PostgreSQL.
 
-### Start the local API server + dashboard
+### Start the dashboard with local vault
 
 ```bash
-# Terminal 1: Start the local API server (wraps ~/.blindkey/vault.db)
-cd packages/local-api
-npm run dev    # runs on http://localhost:3200
+# Terminal 1: Start the vault bridge server (wraps ~/.blindkey/vault.db)
+npm run bridge -w @blindkey/dashboard    # runs on http://localhost:3401
 
 # Terminal 2: Start the dashboard
-cd packages/dashboard
-npm run dev    # opens http://localhost:3400
+npm run dev -w @blindkey/dashboard       # opens http://localhost:3400
 ```
 
-The dashboard proxies `/v1` requests to `localhost:3200`. Secrets and filesystem grants are persisted to SQLite and will survive page refreshes.
+The dashboard features:
+- **Secrets management** - Add, rotate, delete API keys with domain restrictions
+- **Filesystem gating** - Visual tree view, quick unlock for common paths, one-click revoke
+- **Security policies** - Manage content scanning rules, add custom regex patterns, toggle on/off
+- **Audit timeline** - Color-coded timeline of all agent actions, filter by type, export CSV/JSON
+- **2FA** - TOTP-based two-factor authentication
+
+All data persists to `~/.blindkey/vault.db` (SQLite) and survives page refreshes.
 
 ## MCP Configuration (Claude Desktop)
 

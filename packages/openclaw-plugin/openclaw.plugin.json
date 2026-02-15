@@ -1,7 +1,7 @@
 {
   "name": "blindkey",
   "version": "0.1.0",
-  "description": "Secure credential injection for AI agents via BlindKey vault",
+  "description": "Secure credential injection and default-deny filesystem gating for AI agents. Credentials injected server-side, content scanned for leaked secrets.",
   "entry": "dist/index.js",
   "tools": [
     {
@@ -13,6 +13,31 @@
       "name": "bk_list_secrets",
       "description": "List available secret references. Values are never shown.",
       "optional": false
+    },
+    {
+      "name": "bk_fs_read",
+      "description": "Read a file. Requires explicit grant. Sensitive paths blocked.",
+      "optional": false
+    },
+    {
+      "name": "bk_fs_write",
+      "description": "Write a file. Content scanned for secrets — blocked if detected.",
+      "optional": false
+    },
+    {
+      "name": "bk_fs_list",
+      "description": "List directory contents. Only unlocked directories.",
+      "optional": false
+    },
+    {
+      "name": "bk_fs_info",
+      "description": "Get file or directory metadata.",
+      "optional": true
+    },
+    {
+      "name": "bk_list_grants",
+      "description": "Show unlocked paths and permissions.",
+      "optional": true
     }
   ]
 }

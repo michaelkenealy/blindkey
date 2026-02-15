@@ -5,7 +5,11 @@
  */
 
 import { Type } from '@sinclair/typebox';
-import { createLocalVault, type LocalVault } from '@blindkey/local-vault';
+import { createLocalVault, type LocalVault, checkFsAccess, DEFAULT_FS_POLICIES } from '@blindkey/local-vault';
+import { evaluateFsPolicy, type FsRequest } from '@blindkey/core';
+import { readFile, writeFile, appendFile, stat, readdir, mkdir } from 'node:fs/promises';
+import { resolve, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 
 let vault: LocalVault;
 
@@ -155,6 +159,167 @@ export default async (api: any) => {
         service: s.service,
         type: s.secret_type,
         domains: s.allowed_domains,
+      }));
+    },
+  });
+
+  // ── Filesystem Tools ──
+
+  api.registerTool({
+    name: 'bk_fs_read',
+    description:
+      'Read a file. Requires explicit grant via Blindkey dashboard. Blocked paths: .env, .ssh, credentials.',
+    parameters: Type.Object({
+      path: Type.String({ description: 'Absolute path to the file' }),
+      encoding: Type.Optional(Type.String({ description: 'File encoding (default: utf-8)' })),
+    }),
+    async execute(
+      _id: string,
+      { path, encoding }: { path: string; encoding?: string },
+    ) {
+      const fullPath = resolve(path);
+      const access = await checkFsAccess(v, 'read', fullPath);
+      if (!access.allowed) {
+        return { error: `Access denied: ${access.reason}` };
+      }
+
+      try {
+        const content = await readFile(fullPath, { encoding: (encoding ?? 'utf-8') as BufferEncoding });
+        const info = await stat(fullPath);
+        v.audit.log({ action: 'fs_read', path: fullPath, granted: true, detail: JSON.stringify({ size: info.size }) });
+        return { content };
+      } catch (err) {
+        return { error: (err as Error).message };
+      }
+    },
+  });
+
+  api.registerTool({
+    name: 'bk_fs_write',
+    description:
+      'Write a file. Content is scanned for secrets/API keys — writes containing credentials are BLOCKED.',
+    parameters: Type.Object({
+      path: Type.String({ description: 'Absolute path to the file' }),
+      content: Type.String({ description: 'Content to write' }),
+      mode: Type.Optional(Type.String({ description: 'Write mode: overwrite or append (default: overwrite)' })),
+    }),
+    async execute(
+      _id: string,
+      { path, content, mode }: { path: string; content: string; mode?: string },
+    ) {
+      const fullPath = resolve(path);
+      const access = await checkFsAccess(v, 'write', fullPath);
+      if (!access.allowed) {
+        return { error: `Access denied: ${access.reason}` };
+      }
+
+      // Content scan
+      const contentSize = Buffer.byteLength(content, 'utf-8');
+      const scanReq: FsRequest = { operation: 'write', path: fullPath, content };
+      const effectivePolicies = v.policies
+        ? v.policies.getEffective()
+        : DEFAULT_FS_POLICIES;
+      const scanResult = evaluateFsPolicy(effectivePolicies, scanReq, contentSize);
+      if (!scanResult.allowed) {
+        v.audit.log({ action: 'fs_write', path: fullPath, granted: false, blocking_rule: scanResult.blocking_rule ?? undefined });
+        return { error: `Blocked: ${scanResult.message}` };
+      }
+
+      try {
+        await mkdir(dirname(fullPath), { recursive: true });
+
+        if (mode === 'append') {
+          await appendFile(fullPath, content, 'utf-8');
+        } else {
+          await writeFile(fullPath, content, 'utf-8');
+        }
+
+        const hash = createHash('sha256').update(content).digest('hex').slice(0, 12);
+        v.audit.log({ action: 'fs_write', path: fullPath, granted: true, detail: JSON.stringify({ bytes: contentSize, hash }) });
+        return { bytes_written: contentSize };
+      } catch (err) {
+        return { error: (err as Error).message };
+      }
+    },
+  });
+
+  api.registerTool({
+    name: 'bk_fs_list',
+    description: 'List directory contents. Only works on unlocked directories.',
+    parameters: Type.Object({
+      path: Type.String({ description: 'Absolute path to the directory' }),
+    }),
+    async execute(_id: string, { path }: { path: string }) {
+      const fullPath = resolve(path);
+      const access = await checkFsAccess(v, 'list', fullPath);
+      if (!access.allowed) {
+        return { error: `Access denied: ${access.reason}` };
+      }
+
+      try {
+        const entries = await readdir(fullPath, { withFileTypes: true });
+        const results = [];
+        for (const entry of entries) {
+          try {
+            const info = await stat(resolve(fullPath, entry.name));
+            results.push({
+              name: entry.name,
+              type: entry.isDirectory() ? 'directory' : 'file',
+              size: info.size,
+              modified: info.mtime.toISOString(),
+            });
+          } catch {
+            results.push({ name: entry.name, type: entry.isDirectory() ? 'directory' : 'file', size: 0, modified: '' });
+          }
+        }
+        v.audit.log({ action: 'fs_list', path: fullPath, granted: true });
+        return results;
+      } catch (err) {
+        return { error: (err as Error).message };
+      }
+    },
+  });
+
+  api.registerTool({
+    name: 'bk_fs_info',
+    description: 'Get metadata about a file or directory.',
+    parameters: Type.Object({
+      path: Type.String({ description: 'Absolute path' }),
+    }),
+    async execute(_id: string, { path }: { path: string }) {
+      const fullPath = resolve(path);
+      const access = await checkFsAccess(v, 'info', fullPath);
+      if (!access.allowed) {
+        return { error: `Access denied: ${access.reason}` };
+      }
+
+      try {
+        const info = await stat(fullPath);
+        v.audit.log({ action: 'fs_info', path: fullPath, granted: true });
+        return {
+          name: fullPath.split(/[/\\]/).pop(),
+          type: info.isDirectory() ? 'directory' : 'file',
+          size: info.size,
+          created: info.birthtime.toISOString(),
+          modified: info.mtime.toISOString(),
+        };
+      } catch (err) {
+        return { error: (err as Error).message };
+      }
+    },
+  });
+
+  api.registerTool({
+    name: 'bk_list_grants',
+    description: 'List filesystem grants — which paths are unlocked and their permissions.',
+    parameters: Type.Object({}),
+    async execute() {
+      const grants = v.grants.getAll();
+      return grants.map((g) => ({
+        path: g.path,
+        permissions: g.permissions,
+        recursive: g.recursive,
+        requires_approval: g.requires_approval,
       }));
     },
   });

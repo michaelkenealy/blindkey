@@ -965,51 +965,494 @@ const SessionsPage = () => {
   );
 };
 
+type AuditFilter = "all" | "secrets" | "filesystem" | "blocked";
+
 const AuditPage = () => {
-  const entries = [
-    { time: "14:32:05", session: "bk_7kx9m2", action: "API Request", target: "POST /v1/charges", secret: "STRIPE_PROD_KEY", status: "allowed", detail: "Charge $20.00" },
-    { time: "14:31:58", session: "bk_7kx9m2", action: "File Read", target: "/project/src/handler.ts", secret: "—", status: "allowed", detail: "2.4 KB" },
-    { time: "14:31:30", session: "bk_7kx9m2", action: "File Read", target: "/.ssh/id_rsa", secret: "—", status: "blocked", detail: "No grant" },
-    { time: "14:30:15", session: "bk_7kx9m2", action: "API Request", target: "GET /v1/account", secret: "STRIPE_PROD_KEY", status: "blocked", detail: "Not in allowlist" },
+  const [entries, setEntries] = useState<AuditRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalCount, setTotalCount] = useState(0);
+  const [filter, setFilter] = useState<AuditFilter>("all");
+
+  useEffect(() => {
+    Promise.all([fetchAuditLog(200), fetchAuditCount()])
+      .then(([rows, count]) => { setEntries(rows); setTotalCount(count); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const filtered = entries.filter(e => {
+    if (filter === "all") return true;
+    if (filter === "blocked") return e.granted === 0;
+    if (filter === "secrets") return e.action === "proxy_request" || e.vault_ref;
+    if (filter === "filesystem") return e.action.startsWith("fs_");
+    return true;
+  });
+
+  const exportData = (format: "csv" | "json") => {
+    let content: string;
+    let mime: string;
+    let ext: string;
+    if (format === "json") {
+      content = JSON.stringify(filtered, null, 2);
+      mime = "application/json";
+      ext = "json";
+    } else {
+      const headers = "id,time,action,path,vault_ref,granted,blocking_rule,detail\n";
+      const rows = filtered.map(e =>
+        [e.id, e.created_at, e.action, e.path ?? "", e.vault_ref ?? "", e.granted ?? "", e.blocking_rule ?? "", (e.detail ?? "").replace(/"/g, '""')].map(v => `"${v}"`).join(",")
+      ).join("\n");
+      content = headers + rows;
+      mime = "text/csv";
+      ext = "csv";
+    }
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `blindkey-audit.${ext}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const filters: { key: AuditFilter; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "secrets", label: "Secrets" },
+    { key: "filesystem", label: "Files" },
+    { key: "blocked", label: "Blocked" },
   ];
 
   return (
     <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 600, color: tokens.text.primary, margin: 0 }}>Audit Log</h1>
+          <p style={{ fontSize: 14, color: tokens.text.secondary, margin: "6px 0 0" }}>
+            Immutable log of all agent actions. {totalCount > 0 && <span style={{ color: tokens.text.tertiary }}>{totalCount} total entries</span>}
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => exportData("csv")} style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "8px 14px",
+            background: "none", border: `1px solid ${tokens.border.default}`,
+            borderRadius: 6, color: tokens.text.secondary, fontSize: 12, cursor: "pointer",
+          }}>
+            <Download size={14} /> CSV
+          </button>
+          <button onClick={() => exportData("json")} style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "8px 14px",
+            background: "none", border: `1px solid ${tokens.border.default}`,
+            borderRadius: 6, color: tokens.text.secondary, fontSize: 12, cursor: "pointer",
+          }}>
+            <Download size={14} /> JSON
+          </button>
+        </div>
+      </div>
+
+      {/* Filter Bar */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
+        <Filter size={14} style={{ color: tokens.text.tertiary, marginTop: 6, marginRight: 4 }} />
+        {filters.map(f => (
+          <button key={f.key} onClick={() => setFilter(f.key)} style={{
+            padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 500,
+            background: filter === f.key ? tokens.accent.subtle : "transparent",
+            color: filter === f.key ? tokens.accent.base : tokens.text.tertiary,
+            border: `1px solid ${filter === f.key ? tokens.accent.border : tokens.border.default}`,
+            cursor: "pointer",
+          }}>
+            {f.label}
+            {f.key === "blocked" && entries.filter(e => e.granted === 0).length > 0 && (
+              <span style={{ marginLeft: 4, fontSize: 10, color: tokens.status.locked }}>
+                {entries.filter(e => e.granted === 0).length}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Timeline */}
+      {loading ? (
+        <div style={{ padding: 40, textAlign: "center", color: tokens.text.tertiary, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Loading audit log...
+        </div>
+      ) : filtered.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", color: tokens.text.tertiary, fontSize: 14 }}>
+          No audit entries{filter !== "all" ? ` matching "${filter}" filter` : ""}.
+        </div>
+      ) : (
+        <div style={{ position: "relative", paddingLeft: 24 }}>
+          {/* Vertical timeline line */}
+          <div style={{
+            position: "absolute", left: 7, top: 8, bottom: 8, width: 2,
+            background: tokens.border.default, borderRadius: 1,
+          }} />
+
+          {filtered.map((entry, i) => {
+            const isBlocked = entry.granted === 0;
+            const isFs = entry.action.startsWith("fs_");
+            const dotColor = isBlocked ? tokens.status.locked : tokens.accent.base;
+            const time = new Date(entry.created_at);
+            const timeStr = time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            const dateStr = time.toLocaleDateString();
+            let detail: Record<string, unknown> = {};
+            try { detail = entry.detail ? JSON.parse(entry.detail) : {}; } catch { /* ignore */ }
+
+            return (
+              <div key={entry.id} style={{
+                display: "flex", gap: 16, marginBottom: i < filtered.length - 1 ? 8 : 0,
+                position: "relative",
+              }}>
+                {/* Timeline dot */}
+                <div style={{
+                  position: "absolute", left: -20, top: 14,
+                  width: 10, height: 10, borderRadius: "50%",
+                  background: dotColor, border: `2px solid ${tokens.bg.root}`,
+                  zIndex: 1,
+                }} />
+
+                {/* Entry card */}
+                <div style={{
+                  flex: 1, padding: "12px 16px", borderRadius: 8,
+                  border: `1px solid ${isBlocked ? "rgba(239,68,68,0.2)" : tokens.border.default}`,
+                  background: isBlocked ? tokens.status.lockedSubtle : tokens.bg.surface,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <Badge color={isBlocked ? "red" : isFs ? "blue" : "gray"}>{entry.action}</Badge>
+                    <Badge color={isBlocked ? "red" : "accent"}>{isBlocked ? "blocked" : "allowed"}</Badge>
+                    {entry.blocking_rule && (
+                      <span style={{ fontSize: 11, color: tokens.status.locked, fontStyle: "italic" }}>
+                        {entry.blocking_rule}
+                      </span>
+                    )}
+                    <span style={{ marginLeft: "auto", fontFamily: "'Geist Mono', monospace", fontSize: 11, color: tokens.text.tertiary }}>
+                      {dateStr} {timeStr}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: 16, fontSize: 13 }}>
+                    {entry.path && (
+                      <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.primary }}>
+                        {entry.path}
+                      </span>
+                    )}
+                    {entry.vault_ref && (
+                      <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.secondary }}>
+                        {entry.vault_ref}
+                      </span>
+                    )}
+                    {Object.keys(detail).length > 0 && (
+                      <span style={{ fontSize: 12, color: tokens.text.tertiary }}>
+                        {Object.entries(detail).map(([k, v]) => `${k}: ${v}`).join(" · ")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POLICIES PAGE (Content Scanning & Security Rules)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const BUILTIN_RULES = [
+  {
+    id: "__builtin_secrets",
+    label: "Hardcoded Secrets Detection",
+    description: "Blocks writes containing API keys, passwords, tokens, or secret keys (16+ char values)",
+    pattern: '(?i)(api[_-]?key|secret[_-]?key|password|token)\\s*[:=]\\s*["\']?[A-Za-z0-9_\\-]{16,}',
+  },
+  {
+    id: "__builtin_ssn",
+    label: "SSN Detection",
+    description: "Blocks writes containing Social Security Number format (XXX-XX-XXXX)",
+    pattern: '\\b\\d{3}-\\d{2}-\\d{4}\\b',
+  },
+];
+
+const PoliciesPage = () => {
+  const [policies, setPolicies] = useState<PolicyRow[]>([]);
+  const [blockedEntries, setBlockedEntries] = useState<AuditRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // New rule form
+  const [newPattern, setNewPattern] = useState("");
+  const [newMessage, setNewMessage] = useState("");
+  const [testInput, setTestInput] = useState("");
+  const [testResult, setTestResult] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    Promise.all([
+      fetchPolicies(),
+      fetchAuditLog(200),
+    ]).then(([p, audit]) => {
+      setPolicies(p);
+      setBlockedEntries(audit.filter(e => e.blocking_rule === "fs_content_scan"));
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const handleAddRule = async () => {
+    if (!newPattern || !newMessage) return;
+    setError(null);
+    try {
+      const rule = {
+        type: "fs_content_scan" as const,
+        on: "write" as const,
+        block_if_contains: [{ pattern: newPattern, message: newMessage }],
+      };
+      const added = await addPolicy(rule);
+      setPolicies([...policies, added]);
+      setNewPattern("");
+      setNewMessage("");
+      setTestInput("");
+      setTestResult(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const handleRemoveRule = async (id: string) => {
+    setError(null);
+    try {
+      await removePolicy(id);
+      setPolicies(policies.filter(p => p.id !== id));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const handleToggle = async (id: string, enabled: boolean) => {
+    setError(null);
+    try {
+      await togglePolicy(id, enabled);
+      setPolicies(policies.map(p => p.id === id ? { ...p, enabled: enabled ? 1 : 0 } : p));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const runTest = () => {
+    if (!newPattern || !testInput) return;
+    try {
+      const re = new RegExp(newPattern, "i");
+      setTestResult(re.test(testInput));
+    } catch {
+      setTestResult(false);
+    }
+  };
+
+  return (
+    <div>
       <div style={{ marginBottom: 32 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 600, color: tokens.text.primary, margin: 0 }}>Audit Log</h1>
+        <h1 style={{ fontSize: 24, fontWeight: 600, color: tokens.text.primary, margin: 0 }}>Security Policies</h1>
         <p style={{ fontSize: 14, color: tokens.text.secondary, margin: "6px 0 0" }}>
-          Immutable log of all agent actions.
+          Content scanning rules that block writes containing sensitive data.
         </p>
       </div>
 
-      <div style={{ border: `1px solid ${tokens.border.default}`, borderRadius: 8, overflow: "hidden" }}>
+      {error && (
         <div style={{
-          display: "grid", gridTemplateColumns: "80px 100px 100px 200px 140px 80px 1fr",
-          padding: "10px 16px", background: tokens.bg.surface,
-          borderBottom: `1px solid ${tokens.border.default}`,
-          fontSize: 11, fontWeight: 500, color: tokens.text.tertiary, letterSpacing: "0.04em", textTransform: "uppercase",
+          padding: "10px 14px", marginBottom: 16, borderRadius: 8,
+          background: tokens.status.lockedSubtle, color: tokens.status.locked,
+          border: `1px solid rgba(239,68,68,0.25)`, fontSize: 13,
+          display: "flex", alignItems: "center", gap: 8,
         }}>
-          <span>Time</span><span>Session</span><span>Action</span><span>Target</span>
-          <span>Secret</span><span>Status</span><span>Detail</span>
+          <AlertTriangle size={14} /> {error}
+          <button onClick={() => setError(null)} style={{
+            marginLeft: "auto", background: "none", border: "none",
+            color: tokens.status.locked, cursor: "pointer", padding: 2,
+          }}><X size={14} /></button>
         </div>
+      )}
 
-        {entries.map((e, i) => (
-          <div key={i} style={{
-            display: "grid", gridTemplateColumns: "80px 100px 100px 200px 140px 80px 1fr",
-            padding: "10px 16px", alignItems: "center",
-            borderBottom: i < entries.length - 1 ? `1px solid ${tokens.border.default}` : "none",
-          }}>
-            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.tertiary }}>{e.time}</span>
-            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.secondary }}>{e.session}</span>
-            <Badge color={e.action.includes("File") ? "blue" : "gray"}>{e.action}</Badge>
-            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.primary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {e.target}
-            </span>
-            <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.secondary }}>{e.secret}</span>
-            <Badge color={e.status === "allowed" ? "accent" : "red"}>{e.status}</Badge>
-            <span style={{ fontSize: 12, color: tokens.text.secondary }}>{e.detail}</span>
+      {/* Built-in Rules */}
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: tokens.text.secondary, marginBottom: 12 }}>
+          Built-in Rules (always active)
+        </div>
+        <div style={{ border: `1px solid ${tokens.border.default}`, borderRadius: 8, overflow: "hidden" }}>
+          {BUILTIN_RULES.map((rule, i) => (
+            <div key={rule.id} style={{
+              padding: "14px 16px", display: "flex", alignItems: "center", gap: 12,
+              borderBottom: i < BUILTIN_RULES.length - 1 ? `1px solid ${tokens.border.default}` : "none",
+            }}>
+              <Shield size={16} style={{ color: tokens.accent.base, flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 500, color: tokens.text.primary, marginBottom: 4 }}>
+                  {rule.label}
+                </div>
+                <div style={{ fontSize: 12, color: tokens.text.tertiary }}>{rule.description}</div>
+                <div style={{
+                  fontFamily: "'Geist Mono', monospace", fontSize: 11, color: tokens.text.tertiary,
+                  marginTop: 4, padding: "4px 8px", background: tokens.bg.input, borderRadius: 4,
+                  display: "inline-block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis",
+                }}>
+                  {rule.pattern}
+                </div>
+              </div>
+              <Badge color="accent">built-in</Badge>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Custom Rules */}
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: tokens.text.secondary, marginBottom: 12 }}>
+          Custom Rules
+        </div>
+        {loading ? (
+          <div style={{ padding: 24, textAlign: "center", color: tokens.text.tertiary, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Loading...
           </div>
-        ))}
+        ) : (
+          <div style={{ border: `1px solid ${tokens.border.default}`, borderRadius: 8, overflow: "hidden" }}>
+            {policies.length === 0 ? (
+              <div style={{ padding: 24, textAlign: "center", color: tokens.text.tertiary, fontSize: 14 }}>
+                No custom rules. Add one below.
+              </div>
+            ) : (
+              policies.map((p, i) => {
+                let config: { block_if_contains?: Array<{ pattern: string; message: string }> } = {};
+                try { config = JSON.parse(p.config); } catch { /* ignore */ }
+                const rules = config.block_if_contains ?? [];
+                return (
+                  <div key={p.id} style={{
+                    padding: "14px 16px", display: "flex", alignItems: "center", gap: 12,
+                    borderBottom: i < policies.length - 1 ? `1px solid ${tokens.border.default}` : "none",
+                    opacity: p.enabled ? 1 : 0.5,
+                  }}>
+                    <button onClick={() => handleToggle(p.id, !p.enabled)} style={{
+                      background: "none", border: "none", cursor: "pointer", padding: 0, flexShrink: 0,
+                      color: p.enabled ? tokens.accent.base : tokens.text.tertiary,
+                    }}>
+                      {p.enabled ? <Eye size={16} /> : <EyeOff size={16} />}
+                    </button>
+                    <div style={{ flex: 1 }}>
+                      {rules.map((r, ri) => (
+                        <div key={ri}>
+                          <div style={{ fontSize: 13, color: tokens.text.primary, marginBottom: 2 }}>{r.message}</div>
+                          <div style={{
+                            fontFamily: "'Geist Mono', monospace", fontSize: 11, color: tokens.text.tertiary,
+                            padding: "2px 6px", background: tokens.bg.input, borderRadius: 3, display: "inline-block",
+                          }}>
+                            {r.pattern}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <Badge color={p.enabled ? "accent" : "gray"}>{p.enabled ? "active" : "off"}</Badge>
+                    <button onClick={() => handleRemoveRule(p.id)} style={{
+                      background: "none", border: "none", cursor: "pointer", padding: 4,
+                      color: tokens.text.tertiary,
+                    }}>
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                );
+              })
+            )}
+
+            {/* Add Custom Rule */}
+            <div style={{ padding: "16px", borderTop: `1px solid ${tokens.border.default}`, background: tokens.bg.surface }}>
+              <div style={{ fontSize: 12, fontWeight: 500, color: tokens.text.secondary, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                Add Custom Rule
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <input
+                  value={newPattern}
+                  onChange={e => { setNewPattern(e.target.value); setTestResult(null); }}
+                  placeholder="Regex pattern (e.g., AKIA[0-9A-Z]{16})"
+                  style={{
+                    padding: "8px 12px", borderRadius: 6, border: `1px solid ${tokens.border.default}`,
+                    background: tokens.bg.input, color: tokens.text.primary,
+                    fontFamily: "'Geist Mono', monospace", fontSize: 13, outline: "none",
+                  }}
+                />
+                <input
+                  value={newMessage}
+                  onChange={e => setNewMessage(e.target.value)}
+                  placeholder="Block message (e.g., Content contains AWS access key)"
+                  style={{
+                    padding: "8px 12px", borderRadius: 6, border: `1px solid ${tokens.border.default}`,
+                    background: tokens.bg.input, color: tokens.text.primary, fontSize: 13, outline: "none",
+                  }}
+                />
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    value={testInput}
+                    onChange={e => { setTestInput(e.target.value); setTestResult(null); }}
+                    placeholder="Test string (optional)..."
+                    style={{
+                      flex: 1, padding: "8px 12px", borderRadius: 6, border: `1px solid ${tokens.border.default}`,
+                      background: tokens.bg.input, color: tokens.text.primary, fontSize: 13, outline: "none",
+                    }}
+                  />
+                  <button onClick={runTest} disabled={!newPattern || !testInput} style={{
+                    padding: "8px 14px", borderRadius: 6, fontSize: 12, fontWeight: 500,
+                    background: "none", border: `1px solid ${tokens.border.default}`,
+                    color: tokens.text.secondary, cursor: newPattern && testInput ? "pointer" : "default",
+                  }}>
+                    Test
+                  </button>
+                  {testResult !== null && (
+                    <Badge color={testResult ? "red" : "accent"}>
+                      {testResult ? "would block" : "no match"}
+                    </Badge>
+                  )}
+                </div>
+                <button onClick={handleAddRule} disabled={!newPattern || !newMessage} style={{
+                  display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
+                  background: newPattern && newMessage ? tokens.accent.base : tokens.bg.elevated,
+                  color: newPattern && newMessage ? tokens.text.inverse : tokens.text.tertiary,
+                  border: "none", borderRadius: 6, fontSize: 13, fontWeight: 500,
+                  cursor: newPattern && newMessage ? "pointer" : "default", alignSelf: "flex-start",
+                }}>
+                  <Plus size={14} /> Add Rule
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Blocked Write Attempts */}
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 500, color: tokens.text.secondary, marginBottom: 12 }}>
+          Blocked Write Attempts
+        </div>
+        <div style={{ border: `1px solid ${tokens.border.default}`, borderRadius: 8, overflow: "hidden" }}>
+          {blockedEntries.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: tokens.text.tertiary, fontSize: 14 }}>
+              No blocked write attempts yet.
+            </div>
+          ) : (
+            blockedEntries.map((entry, i) => (
+              <div key={entry.id} style={{
+                padding: "12px 16px", display: "flex", alignItems: "center", gap: 12,
+                borderBottom: i < blockedEntries.length - 1 ? `1px solid ${tokens.border.default}` : "none",
+                background: tokens.status.lockedSubtle,
+              }}>
+                <AlertTriangle size={14} style={{ color: tokens.status.locked, flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{
+                    fontFamily: "'Geist Mono', monospace", fontSize: 12, color: tokens.text.primary,
+                  }}>
+                    {entry.path ?? "Unknown path"}
+                  </div>
+                  <div style={{ fontSize: 11, color: tokens.text.tertiary, marginTop: 2 }}>
+                    {new Date(entry.created_at).toLocaleString()}
+                  </div>
+                </div>
+                <Badge color="red">blocked</Badge>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1435,7 +1878,7 @@ const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
 // MAIN DASHBOARD - Mode Toggle
 // ═══════════════════════════════════════════════════════════════════════════
 
-type PageId = "secrets" | "filesystem" | "sessions" | "audit" | "security";
+type PageId = "secrets" | "filesystem" | "sessions" | "audit" | "policies" | "security";
 
 export default function BlindKeyDashboard() {
   const [authed, setAuthed] = useState(isLoggedIn());
@@ -1524,6 +1967,7 @@ export default function BlindKeyDashboard() {
     { id: "filesystem", label: "Filesystem", icon: FolderOpen },
     { id: "sessions", label: "Sessions", icon: Shield },
     { id: "audit", label: "Audit Log", icon: Activity },
+    { id: "policies", label: "Policies", icon: FileWarning },
     { id: "security", label: "Security", icon: Lock },
   ];
 
@@ -1532,6 +1976,7 @@ export default function BlindKeyDashboard() {
     filesystem: <FilesystemPage grants={grants} setGrants={setGrants} />,
     sessions: <SessionsPage />,
     audit: <AuditPage />,
+    policies: <PoliciesPage />,
     security: <SecurityPage />,
   };
 

@@ -1,5 +1,13 @@
 import type Database from 'better-sqlite3';
 
+function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+  } catch {
+    // Column already exists on upgraded installations.
+  }
+}
+
 export function initializeSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS secrets (
@@ -44,5 +52,13 @@ export function initializeSchema(db: Database.Database): void {
       blocking_rule TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE INDEX IF NOT EXISTS idx_local_audit_log_created_at ON audit_log (created_at);
   `);
+
+  ensureColumn(db, 'audit_log', 'prev_hash', 'TEXT');
+  ensureColumn(db, 'audit_log', 'entry_hash', 'TEXT');
+  ensureColumn(db, 'audit_log', 'signature', 'TEXT');
+
+  db.exec('CREATE INDEX IF NOT EXISTS idx_local_audit_log_entry_hash ON audit_log (entry_hash);');
 }

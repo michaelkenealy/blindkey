@@ -6,11 +6,25 @@ export function registerAuditCommand(program: Command, getVault: () => Promise<L
     .command('audit')
     .description('Show recent audit log entries')
     .option('-n, --tail <count>', 'Number of entries to show', '20')
-    .action(async (opts: { tail: string }) => {
+    .option('--verify', 'Verify audit hash-chain integrity')
+    .action(async (opts: { tail: string; verify?: boolean }) => {
       const vault = await getVault();
       const limit = parseInt(opts.tail, 10);
       const entries = vault.audit.recent(limit);
       const total = vault.audit.count();
+
+      if (opts.verify) {
+        const report = vault.audit.verify(process.env.AUDIT_SIGNING_KEY);
+        if (report.valid) {
+          console.log('\x1b[32mOK\x1b[0m Audit hash-chain verification passed');
+        } else {
+          console.error('\x1b[31mFAIL\x1b[0m Audit hash-chain verification failed');
+          for (const err of report.errors) {
+            console.error(`  - ${err}`);
+          }
+          process.exitCode = 2;
+        }
+      }
 
       if (entries.length === 0) {
         console.log('No audit entries yet.');
@@ -49,3 +63,4 @@ export function registerAuditCommand(program: Command, getVault: () => Promise<L
       console.log(`\n\x1b[2mShowing ${entries.length} of ${total} entries\x1b[0m`);
     });
 }
+
