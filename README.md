@@ -103,13 +103,65 @@ bk grants
 
 ```
 packages/
-├── cli/           # Command-line interface (bk command)
-├── core/          # Cryptographic primitives & types
-├── local-vault/   # SQLite-based encrypted storage
-├── proxy/         # HTTP proxy with credential injection
-├── dashboard/     # React admin UI
-└── openclaw-skill/# MCP server for Claude integration
+├── cli/              # Command-line interface (bk command)
+├── core/             # Cryptographic primitives & types
+├── local-vault/      # SQLite-based encrypted storage
+├── local-api/        # Local HTTP server bridging dashboard → vault.db
+├── proxy/            # HTTP proxy with credential injection
+├── dashboard/        # React admin UI
+├── openclaw-plugin/  # OpenClaw agent plugin
+└── openclaw-skill/   # MCP server for Claude integration
 ```
+
+## OpenClaw Plugin
+
+BlindKey ships an OpenClaw plugin so your agents can use `bk://` credential references automatically.
+
+### Install
+
+```bash
+npm install @blindkey/openclaw-plugin
+```
+
+Add to your OpenClaw config:
+
+```json
+{
+  "plugins": ["@blindkey/openclaw-plugin"]
+}
+```
+
+The plugin registers two tools:
+
+| Tool | Description |
+|------|-------------|
+| `bk_proxy` | Make an authenticated API request (credential injected server-side) |
+| `bk_list_secrets` | List available secret references (values never shown) |
+
+### Usage with OpenClaw
+
+```
+You: "Call the Stripe API to list charges using bk://stripe-abc123"
+Agent: (calls bk_proxy → credential injected → response returned)
+```
+
+## Dashboard (Local Mode)
+
+The dashboard can manage secrets and filesystem grants stored in `~/.blindkey/vault.db` without requiring PostgreSQL.
+
+### Start the local API server + dashboard
+
+```bash
+# Terminal 1: Start the local API server (wraps ~/.blindkey/vault.db)
+cd packages/local-api
+npm run dev    # runs on http://localhost:3200
+
+# Terminal 2: Start the dashboard
+cd packages/dashboard
+npm run dev    # opens http://localhost:3400
+```
+
+The dashboard proxies `/v1` requests to `localhost:3200`. Secrets and filesystem grants are persisted to SQLite and will survive page refreshes.
 
 ## MCP Configuration (Claude Desktop)
 

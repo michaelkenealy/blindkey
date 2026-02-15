@@ -10,41 +10,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { createLocalVault, type LocalVault } from '@blindkey/local-vault';
+import {
+  createLocalVault, type LocalVault,
+  DEFAULT_FS_POLICIES, checkFsAccess as sharedCheckFsAccess,
+} from '@blindkey/local-vault';
 import { evaluateFsPolicy, type FsRequest } from '@blindkey/core';
-
-// Default block patterns for sensitive paths
-const DEFAULT_FS_POLICIES = [
-  {
-    type: 'fs_block_patterns' as const,
-    patterns: [
-      '**/.env', '**/.env.*', '**/*.pem', '**/*.key',
-      '**/id_rsa*', '**/id_ed25519*', '**/credentials*',
-      '**/.git/config', '**/.aws/**', '**/.ssh/**',
-      '**/.gnupg/**', '**/.npmrc', '**/.pypirc',
-      '**/.docker/config.json', '**/.kube/config',
-    ],
-  },
-  {
-    type: 'fs_size_limit' as const,
-    max_read_bytes: 10 * 1024 * 1024,
-    max_write_bytes: 5 * 1024 * 1024,
-  },
-  {
-    type: 'fs_content_scan' as const,
-    on: 'write' as const,
-    block_if_contains: [
-      {
-        pattern: '(?i)(api[_-]?key|secret[_-]?key|password|token)\\s*[:=]\\s*["\']?[A-Za-z0-9_\\-]{16,}',
-        message: 'Content appears to contain hardcoded secrets or API keys',
-      },
-      {
-        pattern: '\\b\\d{3}-\\d{2}-\\d{4}\\b',
-        message: 'Content appears to contain SSN-format data',
-      },
-    ],
-  },
-];
 
 let vault: LocalVault;
 
@@ -201,22 +171,7 @@ import { resolve, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 
 async function checkFsAccess(operation: string, path: string): Promise<{ allowed: boolean; reason?: string }> {
-  // 1. Check grants
-  const grantResult = vault.grants.checkAccess(operation as FsRequest['operation'], path);
-  if (!grantResult.granted) {
-    vault.audit.log({ action: `fs_${operation}`, path, granted: false, blocking_rule: 'no_grant' });
-    return { allowed: false, reason: grantResult.reason ?? 'No filesystem grant' };
-  }
-
-  // 2. Check policies (block patterns, size limits)
-  const fsReq: FsRequest = { operation: operation as FsRequest['operation'], path };
-  const policyResult = evaluateFsPolicy(DEFAULT_FS_POLICIES, fsReq);
-  if (!policyResult.allowed) {
-    vault.audit.log({ action: `fs_${operation}`, path, granted: false, blocking_rule: policyResult.blocking_rule ?? undefined });
-    return { allowed: false, reason: policyResult.message ?? 'Blocked by policy' };
-  }
-
-  return { allowed: true };
+  return sharedCheckFsAccess(vault, operation, path);
 }
 
 tool(
@@ -265,7 +220,10 @@ tool(
     // Content scan
     const contentSize = Buffer.byteLength(content, 'utf-8');
     const scanReq: FsRequest = { operation: 'write', path: fullPath, content };
-    const scanResult = evaluateFsPolicy(DEFAULT_FS_POLICIES, scanReq, contentSize);
+    const effectivePolicies = vault.policies
+      ? vault.policies.getEffective()
+      : DEFAULT_FS_POLICIES;
+    const scanResult = evaluateFsPolicy(effectivePolicies, scanReq, contentSize);
     if (!scanResult.allowed) {
       vault.audit.log({ action: 'fs_write', path: fullPath, granted: false, blocking_rule: scanResult.blocking_rule ?? undefined });
       return { content: [{ type: 'text' as const, text: `Blocked: ${scanResult.message}` }], isError: true };

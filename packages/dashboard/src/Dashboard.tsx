@@ -1,11 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
-import { Lock, LockOpen, Plus, X, Copy, Shield, FolderOpen, Folder, Key, Activity, AlertTriangle, Check, RefreshCw, ChevronRight, Zap, LogOut, Loader } from "lucide-react";
+import { Lock, LockOpen, Plus, X, Copy, Shield, FolderOpen, Folder, Key, Activity, AlertTriangle, Check, RefreshCw, ChevronRight, Zap, LogOut, Loader, FileWarning, Download, Filter, Eye, EyeOff, Trash2 } from "lucide-react";
 import {
   isLoggedIn, clearToken, login, register, verifyTotp,
   fetchSecrets, createSecret, deleteSecret, rotateSecret,
   setupTotp, confirmTotp, disableTotp, getTotpStatus,
-  type SecretMetadata, ApiError,
+  fetchGrants, createGrant, deleteGrant,
+  type SecretMetadata, type GrantMetadata, ApiError,
 } from "./api";
+import {
+  fetchAuditLog, fetchAuditCount,
+  fetchPolicies, addPolicy, removePolicy, togglePolicy,
+  type AuditRow, type PolicyRow,
+} from "./api/vault-client";
 
 // ─── Design Tokens ───
 const tokens = {
@@ -47,7 +53,7 @@ const Badge = ({ children, color = "accent" }: { children: React.ReactNode; colo
 // No plaintext value is ever stored client-side after creation.
 
 interface FsGrant {
-  id: number;
+  id: string;
   path: string;
   permission: string;
   recursive: boolean;
@@ -107,15 +113,29 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
     }
   };
 
-  const addFolder = () => {
+  const addFolder = async () => {
     if (!newPath) return;
     const path = newPath.startsWith("/") ? newPath : `/${newPath}`;
     if (grants.find(g => g.path === path)) return;
-    setGrants([...grants, { id: Date.now(), path, permission: "read", recursive: true, approval: false }]);
-    setNewPath("");
+    setError(null);
+    try {
+      const grant = await createGrant({ path, permissions: ["read"], recursive: true });
+      setGrants([...grants, { id: grant.id, path: grant.path, permission: "read", recursive: grant.recursive, approval: grant.requires_approval }]);
+      setNewPath("");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to unlock folder");
+    }
   };
 
-  const removeFolder = (id: number) => setGrants(grants.filter(g => g.id !== id));
+  const removeFolder = async (id: string) => {
+    setError(null);
+    try {
+      await deleteGrant(id);
+      setGrants(grants.filter(g => g.id !== id));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to revoke folder");
+    }
+  };
 
   const copyRef = (vaultRef: string, name: string) => {
     navigator.clipboard.writeText(vaultRef);
@@ -670,17 +690,37 @@ const FilesystemPage = ({ grants, setGrants }: FilesystemPageProps) => {
     { path: "/.aws", depth: 0, type: "dir", sensitive: true },
   ];
 
+  const [fsError, setFsError] = useState<string | null>(null);
+
   const getGrant = (path: string) => grants.find(g => g.path === path);
-  const toggleGrant = (path: string) => {
+  const toggleGrant = async (path: string) => {
     const existing = getGrant(path);
-    if (existing) {
-      setGrants(grants.filter(g => g.path !== path));
-    } else {
-      setGrants([...grants, { id: Date.now(), path, permission: "read", recursive: true, approval: false }]);
+    setFsError(null);
+    try {
+      if (existing) {
+        await deleteGrant(existing.id);
+        setGrants(grants.filter(g => g.path !== path));
+      } else {
+        const grant = await createGrant({ path, permissions: ["read"], recursive: true });
+        setGrants([...grants, { id: grant.id, path: grant.path, permission: "read", recursive: grant.recursive, approval: grant.requires_approval }]);
+      }
+    } catch (e) {
+      setFsError(e instanceof ApiError ? e.message : "Failed to update grant");
     }
   };
-  const updatePermission = (path: string, perm: string) => {
-    setGrants(grants.map(g => g.path === path ? { ...g, permission: perm } : g));
+  const updatePermission = async (path: string, perm: string) => {
+    const existing = getGrant(path);
+    if (!existing) return;
+    setFsError(null);
+    try {
+      // Delete and re-create with new permissions
+      await deleteGrant(existing.id);
+      const permArray = perm === "write" ? ["read", "write"] : perm === "approval" ? ["read"] : ["read"];
+      const grant = await createGrant({ path, permissions: permArray, recursive: true, requires_approval: perm === "approval" });
+      setGrants(grants.map(g => g.path === path ? { id: grant.id, path: grant.path, permission: perm, recursive: grant.recursive, approval: grant.requires_approval } : g));
+    } catch (e) {
+      setFsError(e instanceof ApiError ? e.message : "Failed to update permission");
+    }
   };
 
   return (
@@ -813,6 +853,52 @@ const FilesystemPage = ({ grants, setGrants }: FilesystemPageProps) => {
                 <span style={{ fontSize: 11, color: tokens.text.tertiary }}>{b.reason}</span>
               </div>
             ))}
+          </div>
+
+          {/* Quick Unlock */}
+          <div style={{ border: `1px solid ${tokens.border.default}`, borderRadius: 8, overflow: "hidden", marginTop: 16 }}>
+            <div style={{
+              padding: "10px 16px", background: tokens.bg.surface,
+              borderBottom: `1px solid ${tokens.border.default}`,
+              fontSize: 11, fontWeight: 500, color: tokens.text.tertiary, letterSpacing: "0.04em", textTransform: "uppercase",
+            }}>
+              Quick Unlock
+            </div>
+            {[
+              { path: "~/Desktop", label: "Desktop" },
+              { path: "~/Documents", label: "Documents" },
+              { path: "~/Downloads", label: "Downloads" },
+              { path: "~/Code", label: "Code / Projects" },
+            ].map((item, i) => {
+              const alreadyGranted = grants.some(g => g.path === item.path);
+              return (
+                <div key={item.path} style={{
+                  padding: "8px 16px", display: "flex", alignItems: "center", gap: 8,
+                  borderBottom: i < 3 ? `1px solid ${tokens.border.default}` : "none",
+                }}>
+                  {alreadyGranted
+                    ? <LockOpen size={14} style={{ color: tokens.accent.base }} />
+                    : <Folder size={14} style={{ color: tokens.text.tertiary }} />
+                  }
+                  <span style={{ flex: 1, fontSize: 13, color: alreadyGranted ? tokens.text.primary : tokens.text.secondary }}>
+                    {item.label}
+                  </span>
+                  <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: 11, color: tokens.text.tertiary, marginRight: 8 }}>
+                    {item.path}
+                  </span>
+                  {!alreadyGranted && (
+                    <button onClick={() => toggleGrant(item.path)} style={{
+                      padding: "3px 10px", borderRadius: 4, fontSize: 11, fontWeight: 500,
+                      background: "rgba(255,255,255,0.04)", color: tokens.accent.base,
+                      border: `1px solid ${tokens.accent.border}`, cursor: "pointer",
+                    }}>
+                      Unlock
+                    </button>
+                  )}
+                  {alreadyGranted && <Badge color="accent">granted</Badge>}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1361,11 +1447,8 @@ export default function BlindKeyDashboard() {
   const [secrets, setSecrets] = useState<SecretMetadata[]>([]);
   const [secretsLoading, setSecretsLoading] = useState(true);
 
-  // Filesystem grants (still client-side for now)
-  const [grants, setGrants] = useState<FsGrant[]>([
-    { id: 1, path: "/project/src", permission: "read", recursive: true, approval: false },
-    { id: 2, path: "/project/output", permission: "write", recursive: true, approval: false },
-  ]);
+  // Filesystem grants (persisted via API)
+  const [grants, setGrants] = useState<FsGrant[]>([]);
 
   const refreshSecrets = useCallback(async () => {
     try {
@@ -1380,12 +1463,28 @@ export default function BlindKeyDashboard() {
     }
   }, []);
 
-  // Fetch secrets on mount
+  const refreshGrants = useCallback(async () => {
+    try {
+      const data = await fetchGrants();
+      setGrants(data.map(g => ({
+        id: g.id,
+        path: g.path,
+        permission: g.requires_approval ? "approval" : g.permissions.includes("write") ? "write" : "read",
+        recursive: g.recursive,
+        approval: g.requires_approval,
+      })));
+    } catch {
+      // Grants endpoint may not exist on older API servers — degrade gracefully
+    }
+  }, []);
+
+  // Fetch secrets and grants on mount
   useEffect(() => {
     if (authed) {
       refreshSecrets();
+      refreshGrants();
     }
-  }, [authed, refreshSecrets]);
+  }, [authed, refreshSecrets, refreshGrants]);
 
   const handleLogout = () => {
     clearToken();

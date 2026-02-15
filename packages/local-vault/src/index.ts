@@ -4,18 +4,23 @@ import { initializeSchema } from './schema.js';
 import { SQLiteVaultBackend } from './store.js';
 import { LocalGrantService } from './grants.js';
 import { LocalAuditService } from './audit.js';
+import { LocalPolicyService } from './policies.js';
 
 export { SQLiteVaultBackend } from './store.js';
 export { LocalGrantService } from './grants.js';
 export { LocalAuditService } from './audit.js';
+export { LocalPolicyService } from './policies.js';
 export type { AuditEntry, AuditRow } from './audit.js';
+export type { PolicyRow } from './policies.js';
 export { loadMasterKey, getDbPath, getVaultDir } from './master-key.js';
+export { DEFAULT_FS_POLICIES, checkFsAccess } from './fs-access.js';
 
 export interface LocalVault {
   db: Database.Database;
   store: SQLiteVaultBackend;
   grants: LocalGrantService;
   audit: LocalAuditService;
+  policies: LocalPolicyService;
 }
 
 /**
@@ -35,6 +40,7 @@ export async function createLocalVault(): Promise<LocalVault> {
   const store = new SQLiteVaultBackend(db);
   const grants = new LocalGrantService(db);
   const audit = new LocalAuditService(db);
+  const policies = new LocalPolicyService(db);
 
-  return { db, store, grants, audit };
+  return { db, store, grants, audit, policies };
 }

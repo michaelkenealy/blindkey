@@ -187,3 +187,35 @@ export async function rotateSecret(id: string, plaintextValue: string): Promise<
     body: JSON.stringify({ plaintext_value: plaintextValue }),
   });
 }
+
+// ── Filesystem Grants ──
+
+export interface GrantMetadata {
+  id: string;
+  path: string;
+  permissions: string[];
+  recursive: boolean;
+  requires_approval: boolean;
+  created_at: string;
+}
+
+export async function fetchGrants(): Promise<GrantMetadata[]> {
+  const data = await api<{ grants: GrantMetadata[] }>('/grants');
+  return data.grants;
+}
+
+export async function createGrant(input: {
+  path: string;
+  permissions: string[];
+  recursive?: boolean;
+  requires_approval?: boolean;
+}): Promise<GrantMetadata> {
+  return api<GrantMetadata>('/grants', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteGrant(id: string): Promise<void> {
+  await api<void>(`/grants/${id}`, { method: 'DELETE' });
+}

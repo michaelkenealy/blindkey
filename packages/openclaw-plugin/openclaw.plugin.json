@@ -1,0 +1,18 @@
+{
+  "name": "blindkey",
+  "version": "0.1.0",
+  "description": "Secure credential injection for AI agents via BlindKey vault",
+  "entry": "dist/index.js",
+  "tools": [
+    {
+      "name": "bk_proxy",
+      "description": "Make authenticated API request. Credential injected server-side.",
+      "optional": false
+    },
+    {
+      "name": "bk_list_secrets",
+      "description": "List available secret references. Values are never shown.",
+      "optional": false
+    }
+  ]
+}
