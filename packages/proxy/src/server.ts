@@ -10,6 +10,18 @@ import { CachingVaultService } from './services/caching-vault-service.js';
 
 const { Pool } = pg;
 
+const CORS_ALLOW_ALL = process.env.CORS_ALLOW_ALL === 'true';
+const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0);
+
+function isCorsOriginAllowed(origin?: string): boolean {
+  if (!origin) return true;
+  if (CORS_ALLOW_ALL) return true;
+  return CORS_ALLOWED_ORIGINS.includes(origin);
+}
+
 export interface ProxyServerConfig {
   port: number;
   databaseUrl: string;
@@ -34,7 +46,12 @@ export async function createProxyServer(config: ProxyServerConfig) {
   const redis = new IORedis(config.redisUrl);
 
   // CORS
-  await app.register(cors, { origin: true });
+  await app.register(cors, {
+    origin: (origin, callback) => {
+      callback(null, isCorsOriginAllowed(origin));
+    },
+    credentials: false,
+  });
 
   // Health check (no auth required)
   app.get('/health', async () => ({ status: 'ok', service: 'agentvault-proxy' }));
@@ -86,3 +103,4 @@ export async function createProxyServer(config: ProxyServerConfig) {
 
   return { app, db, redis };
 }
+

@@ -19,6 +19,18 @@ import { resolve } from 'node:path';
 
 const { Pool } = pg;
 
+const CORS_ALLOW_ALL = process.env.CORS_ALLOW_ALL === 'true';
+const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0);
+
+function isCorsOriginAllowed(origin?: string): boolean {
+  if (!origin) return true;
+  if (CORS_ALLOW_ALL) return true;
+  return CORS_ALLOWED_ORIGINS.includes(origin);
+}
+
 declare module 'fastify' {
   interface FastifyRequest {
     session?: AgentSession;
@@ -45,7 +57,12 @@ export async function createFsProxyServer(config: FsProxyServerConfig) {
   const grantService = new GrantService(db);
   const auditService = new FsAuditService(db);
 
-  await app.register(cors, { origin: true });
+  await app.register(cors, {
+    origin: (origin, callback) => {
+      callback(null, isCorsOriginAllowed(origin));
+    },
+    credentials: false,
+  });
 
   // Health check
   app.get('/health', async () => ({ status: 'ok', service: 'agentvault-fs-proxy' }));
@@ -276,3 +293,4 @@ export async function createFsProxyServer(config: FsProxyServerConfig) {
 
   return { app, db };
 }
+
