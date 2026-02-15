@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
+import { ValidationError } from '@blindkey/core';
 
 interface AuditQuerystring {
   vault_ref?: string;
@@ -11,10 +12,40 @@ interface AuditQuerystring {
   offset?: string;
 }
 
+function parseNonNegativeInt(value: string | undefined, fallback: number, field: string): number {
+  if (value === undefined) return fallback;
+  if (!/^\d+$/.test(value)) {
+    throw new ValidationError(`${field} must be a non-negative integer`);
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new ValidationError(`${field} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function parseIsoDate(value: string | undefined, field: string): Date | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new ValidationError(`${field} must be a valid date`);
+  }
+  return date;
+}
+
 export function registerAuditRoutes(app: FastifyInstance, db: Pool) {
   app.get<{ Querystring: AuditQuerystring }>('/v1/audit', async (request, reply) => {
     const userId = request.userId!;
     const { vault_ref, session_id, action, from, to, limit, offset } = request.query;
+
+    const fromDate = parseIsoDate(from, 'from');
+    const toDate = parseIsoDate(to, 'to');
+    if (fromDate && toDate && fromDate > toDate) {
+      throw new ValidationError('from must be earlier than or equal to to');
+    }
+
+    const queryLimit = Math.min(parseNonNegativeInt(limit, 50, 'limit'), 200);
+    const queryOffset = parseNonNegativeInt(offset, 0, 'offset');
 
     const conditions: string[] = ['user_id = $1'];
     const params: unknown[] = [userId];
@@ -32,27 +63,27 @@ export function registerAuditRoutes(app: FastifyInstance, db: Pool) {
       conditions.push(`action = $${paramIdx++}`);
       params.push(action);
     }
-    if (from) {
+    if (fromDate) {
       conditions.push(`created_at >= $${paramIdx++}`);
-      params.push(new Date(from));
+      params.push(fromDate);
     }
-    if (to) {
+    if (toDate) {
       conditions.push(`created_at <= $${paramIdx++}`);
-      params.push(new Date(to));
+      params.push(toDate);
     }
-
-    const queryLimit = Math.min(parseInt(limit ?? '50', 10), 200);
-    const queryOffset = parseInt(offset ?? '0', 10);
 
     const where = conditions.join(' AND ');
+
+    const limitParam = paramIdx++;
+    const offsetParam = paramIdx++;
     const result = await db.query(
       `SELECT id, session_id, vault_ref, action, request_summary, policy_result,
               response_status, latency_ms, created_at
        FROM audit_log
        WHERE ${where}
        ORDER BY created_at DESC
-       LIMIT ${queryLimit} OFFSET ${queryOffset}`,
-      params
+       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+      [...params, queryLimit, queryOffset]
     );
 
     const countResult = await db.query(
