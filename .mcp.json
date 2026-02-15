@@ -3,7 +3,7 @@
     "blindkey": {
       "type": "stdio",
       "command": "bk",
-      "args": ["serve"],
+      "args": ["serve", "--mcp"],
       "env": {}
     }
   }

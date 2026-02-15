@@ -1,22 +1,17 @@
 import type { Command } from 'commander';
 import type { LocalVault } from '@blindkey/local-vault';
-import { createInterface } from 'node:readline';
-import { access, readFile, writeFile, copyFile } from 'node:fs/promises';
+import { readFile, writeFile, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { SecretType } from '@blindkey/core';
+import {
+  GREEN, YELLOW, RED, CYAN, BOLD, DIM, RESET,
+  createPrompt, fileExists,
+} from '../utils/prompt.js';
 
 const BLINDKEY_DIR = join(homedir(), '.blindkey');
 const KEY_FILE = join(BLINDKEY_DIR, 'master.key');
 const BACKUP_FILE = join(BLINDKEY_DIR, 'master.key.backup');
-
-const GREEN = '\x1b[32m';
-const YELLOW = '\x1b[33m';
-const RED = '\x1b[31m';
-const CYAN = '\x1b[36m';
-const BOLD = '\x1b[1m';
-const DIM = '\x1b[2m';
-const RESET = '\x1b[0m';
 
 const SERVICES: Record<string, { domain: string; type: SecretType }> = {
   stripe: { domain: 'api.stripe.com', type: 'api_key' },
@@ -29,62 +24,6 @@ const SERVICES: Record<string, { domain: string; type: SecretType }> = {
   slack: { domain: 'slack.com', type: 'oauth_token' },
   custom: { domain: '', type: 'api_key' },
 };
-
-function createPrompt(): {
-  question: (q: string) => Promise<string>;
-  questionHidden: (q: string) => Promise<string>;
-  close: () => void;
-} {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return {
-    question: (q: string) =>
-      new Promise((resolve) => {
-        rl.question(q, resolve);
-      }),
-    questionHidden: (q: string) =>
-      new Promise((resolve) => {
-        process.stdout.write(q);
-        const stdin = process.stdin;
-        const wasRaw = stdin.isRaw;
-        stdin.setRawMode?.(true);
-        let input = '';
-        const onData = (char: Buffer) => {
-          const c = char.toString();
-          if (c === '\n' || c === '\r') {
-            stdin.removeListener('data', onData);
-            stdin.setRawMode?.(wasRaw);
-            process.stdout.write('\n');
-            resolve(input);
-          } else if (c === '\u0003') {
-            process.exit(0);
-          } else if (c === '\u007F' || c === '\b') {
-            if (input.length > 0) {
-              input = input.slice(0, -1);
-              process.stdout.write('\b \b');
-            }
-          } else {
-            input += c;
-            process.stdout.write('*');
-          }
-        };
-        stdin.on('data', onData);
-      }),
-    close: () => rl.close(),
-  };
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export function registerInitCommand(program: Command, getVault: () => Promise<LocalVault>) {
   program

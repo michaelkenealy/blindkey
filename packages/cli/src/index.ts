@@ -17,6 +17,7 @@ import { registerServeCommand } from './commands/serve.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerMigrateCommand } from './commands/migrate.js';
 import { registerInitCommand } from './commands/init.js';
+import { registerSetupCommand } from './commands/setup.js';
 
 const program = new Command();
 
@@ -50,5 +51,6 @@ registerServeCommand(program, getVault);
 registerDoctorCommand(program, getVault);
 registerMigrateCommand(program, getVault);
 registerInitCommand(program, getVault);
+registerSetupCommand(program, getVault);
 
 program.parse();
