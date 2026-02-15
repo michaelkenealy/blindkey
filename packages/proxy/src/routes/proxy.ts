@@ -4,6 +4,7 @@ import type { Redis } from 'ioredis';
 import {
   AuthorizationError,
   NotFoundError,
+  ValidationError,
   hashBody,
   type ProxyRequest,
   type BlindKeyError,
@@ -11,7 +12,7 @@ import {
 } from '@blindkey/core';
 import { AuditService } from '../services/audit.js';
 import { PolicyMiddleware } from '../middleware/policy.js';
-import { injectCredential } from '../services/injector.js';
+import { injectCredential, InjectionSecurityError } from '../services/injector.js';
 import { sanitizeResponse, sanitizeHeaders } from '../middleware/sanitize.js';
 import { validateTargetDomain } from '../services/domain-validator.js';
 
@@ -22,6 +23,47 @@ interface ProxyRequestBody {
   headers?: Record<string, string>;
   body?: unknown;
   approval_id?: string;
+}
+
+const BLOCKED_FORWARD_HEADERS = new Set([
+  'host',
+  'content-length',
+  'transfer-encoding',
+  'connection',
+  'keep-alive',
+  'upgrade',
+  'http2-settings',
+  'te',
+  'trailer',
+  'proxy-authorization',
+  'proxy-authenticate',
+  'proxy-connection',
+]);
+
+function sanitizeForwardHeaders(headers: Record<string, string> | undefined): Record<string, string> {
+  if (!headers) return {};
+
+  const cleaned: Record<string, string> = {};
+  for (const [rawName, rawValue] of Object.entries(headers)) {
+    if (typeof rawName !== 'string' || typeof rawValue !== 'string') {
+      continue;
+    }
+
+    const name = rawName.trim();
+    const value = rawValue.trim();
+    const lowerName = name.toLowerCase();
+
+    if (!name || BLOCKED_FORWARD_HEADERS.has(lowerName)) {
+      continue;
+    }
+    if (/[\r\n]/.test(name) || /[\r\n]/.test(value)) {
+      continue;
+    }
+
+    cleaned[name] = value;
+  }
+
+  return cleaned;
 }
 
 export function registerProxyRoutes(app: FastifyInstance, db: Pool, redis: Redis, vaultBackend: VaultBackend) {
@@ -72,7 +114,8 @@ export function registerProxyRoutes(app: FastifyInstance, db: Pool, redis: Redis
       return reply.code(avErr.statusCode).send(avErr.toJSON());
     }
 
-    const proxyRequest: ProxyRequest = { vault_ref, method, url, headers: agentHeaders, body: agentBody };
+    const safeAgentHeaders = sanitizeForwardHeaders(agentHeaders);
+    const proxyRequest: ProxyRequest = { vault_ref, method, url, headers: safeAgentHeaders, body: agentBody };
 
     // Enforce policies
     let policyChecked: string[] = [];
@@ -94,7 +137,32 @@ export function registerProxyRoutes(app: FastifyInstance, db: Pool, redis: Redis
     }
 
     // Inject credentials
-    const injection = injectCredential(secret, plaintext, agentHeaders ?? {}, url);
+    let injection: { headers: Record<string, string>; url: string };
+    try {
+      injection = injectCredential(secret, plaintext, safeAgentHeaders, url);
+    } catch (err) {
+      const avErr = err instanceof InjectionSecurityError
+        ? new ValidationError(`Credential injection rejected: ${err.message}`)
+        : err as BlindKeyError;
+
+      await audit.log({
+        user_id: session.user_id,
+        session_id: session.id,
+        vault_ref,
+        action: 'request_denied',
+        request_summary: { method, url, body_hash: hashBody(agentBody) },
+        policy_result: { blocking_policy: 'injection_validation', checked: policyChecked },
+      });
+
+      if ('statusCode' in (avErr as Record<string, unknown>)) {
+        return reply.code((avErr as BlindKeyError).statusCode).send((avErr as BlindKeyError).toJSON());
+      }
+
+      return reply.code(400).send({
+        error: 'validation_error',
+        message: 'Credential injection rejected',
+      });
+    }
 
     // Forward the request to the target API
     let targetResponse: Response;

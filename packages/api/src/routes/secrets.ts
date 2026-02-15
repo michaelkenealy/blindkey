@@ -28,17 +28,93 @@ interface UpdateSecretBody {
   injection_ttl_seconds?: number;
 }
 
+const DOMAIN_PATTERN = /^(\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+const HEADER_NAME_PATTERN = /^[a-zA-Z][a-zA-Z0-9\-_]*$/;
+const QUERY_PARAM_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_\-]*$/;
+
+const BLOCKED_CUSTOM_HEADERS = new Set([
+  'host',
+  'content-length',
+  'transfer-encoding',
+  'connection',
+  'keep-alive',
+  'upgrade',
+  'http2-settings',
+  'te',
+  'trailer',
+  'proxy-authorization',
+  'proxy-authenticate',
+  'proxy-connection',
+  'cookie',
+  'set-cookie',
+  'authorization',
+]);
+
 function validateAllowedDomains(allowed_domains: unknown): void {
   if (allowed_domains === null || allowed_domains === undefined) return;
   if (!Array.isArray(allowed_domains) || !allowed_domains.every((d: unknown) => typeof d === 'string')) {
     throw new ValidationError('allowed_domains must be an array of strings');
   }
+
+  for (const domainRaw of allowed_domains) {
+    const domain = domainRaw.trim().toLowerCase();
+    if (!domain || domain.length > 253) {
+      throw new ValidationError('allowed_domains entries must be valid hostnames');
+    }
+    if (domain.includes('/') || domain.includes(':') || domain.includes('?') || domain.includes('#')) {
+      throw new ValidationError('allowed_domains must contain hostnames only (no scheme, path, or port)');
+    }
+    if (!DOMAIN_PATTERN.test(domain)) {
+      throw new ValidationError(`Invalid allowed_domains entry: ${domainRaw}`);
+    }
+  }
 }
 
 function validateInjectionTtl(ttl: unknown): void {
   if (ttl === undefined) return;
-  if (typeof ttl !== 'number' || ttl < 0 || ttl > 86400) {
-    throw new ValidationError('injection_ttl_seconds must be a number between 0 and 86400');
+  if (typeof ttl !== 'number' || !Number.isInteger(ttl) || ttl < 60 || ttl > 86400) {
+    throw new ValidationError('injection_ttl_seconds must be an integer between 60 and 86400');
+  }
+}
+
+function validateSecretMetadata(secretType: string, metadata: unknown): void {
+  if (metadata === undefined || metadata === null) return;
+  if (typeof metadata !== 'object' || Array.isArray(metadata)) {
+    throw new ValidationError('metadata must be an object');
+  }
+
+  const meta = metadata as Record<string, unknown>;
+
+  if (secretType === 'custom_header') {
+    const headerNameRaw = meta.header_name;
+    if (headerNameRaw !== undefined) {
+      if (typeof headerNameRaw !== 'string') {
+        throw new ValidationError('metadata.header_name must be a string');
+      }
+      const headerName = headerNameRaw.trim();
+      if (!HEADER_NAME_PATTERN.test(headerName)) {
+        throw new ValidationError('metadata.header_name contains invalid characters');
+      }
+      if (BLOCKED_CUSTOM_HEADERS.has(headerName.toLowerCase())) {
+        throw new ValidationError(`metadata.header_name "${headerName}" is blocked for security`);
+      }
+    }
+  }
+
+  if (secretType === 'query_param') {
+    const queryParamRaw = meta.query_param_name;
+    if (queryParamRaw !== undefined) {
+      if (typeof queryParamRaw !== 'string') {
+        throw new ValidationError('metadata.query_param_name must be a string');
+      }
+      const queryParam = queryParamRaw.trim();
+      if (!QUERY_PARAM_PATTERN.test(queryParam)) {
+        throw new ValidationError('metadata.query_param_name contains invalid characters');
+      }
+      if (queryParam.length > 64) {
+        throw new ValidationError('metadata.query_param_name must be <= 64 characters');
+      }
+    }
   }
 }
 
@@ -59,6 +135,7 @@ export function registerSecretsRoutes(app: FastifyInstance, db: Pool) {
 
     validateAllowedDomains(allowed_domains);
     validateInjectionTtl(injection_ttl_seconds);
+    validateSecretMetadata(secret_type, metadata);
 
     const vaultRef = generateVaultRef(service);
     const { encrypted, iv, authTag } = encrypt(plaintext_value);
