@@ -48,7 +48,7 @@ export class PolicyMiddleware {
       // SECURITY: Fail-closed - treat as invalid configuration
       console.error(
         `[SECURITY] Session ${session.id} references non-existent policy ${session.policy_set_id}. ` +
-        `Blocking request.`
+          'Blocking request.'
       );
       throw new PolicyDeniedError(
         'policy_not_found',
@@ -58,9 +58,9 @@ export class PolicyMiddleware {
 
     const policySet = result.rows[0] as PolicySet;
     // rules is stored as JSONB, parse if needed
-    const rules = typeof policySet.rules === 'string'
+    const rules = (typeof policySet.rules === 'string'
       ? JSON.parse(policySet.rules)
-      : policySet.rules;
+      : policySet.rules) as PolicySet['rules'];
     policySet.rules = rules;
 
     // Evaluate static policies

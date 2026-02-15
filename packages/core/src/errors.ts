@@ -105,6 +105,24 @@ export class DomainNotAllowedError extends BlindKeyError {
   }
 }
 
+export class EgressDeniedError extends BlindKeyError {
+  public readonly target: string;
+
+  constructor(target: string, reason: string) {
+    super(`Egress target denied for "${target}": ${reason}`, 'egress_denied', 403);
+    this.name = 'EgressDeniedError';
+    this.target = target;
+  }
+
+  toJSON() {
+    return {
+      error: this.code,
+      message: this.message,
+      target: this.target,
+    };
+  }
+}
+
 export class FsAccessDeniedError extends BlindKeyError {
   public readonly path: string;
   public readonly operation: string;

@@ -58,7 +58,7 @@ export function registerProxyRoutes(app: FastifyInstance, db: Pool, redis: Redis
 
     // Validate target domain against secret's allowed_domains
     try {
-      validateTargetDomain(secret, url);
+      await validateTargetDomain(secret, url);
     } catch (domainErr) {
       const avErr = domainErr as BlindKeyError;
       await audit.log({
@@ -67,7 +67,7 @@ export function registerProxyRoutes(app: FastifyInstance, db: Pool, redis: Redis
         vault_ref,
         action: 'request_denied',
         request_summary: { method, url, body_hash: hashBody(agentBody) },
-        policy_result: { reason: 'domain_not_allowed' },
+        policy_result: { reason: avErr.code },
       });
       return reply.code(avErr.statusCode).send(avErr.toJSON());
     }
