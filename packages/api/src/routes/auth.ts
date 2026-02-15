@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import type { SignOptions } from 'jsonwebtoken';
 import * as OTPAuth from 'otpauth';
 import { ValidationError, AuthenticationError, encrypt, decrypt } from '@blindkey/core';
 
@@ -45,13 +46,18 @@ const MAX_FAILED_BY_EMAIL = 8;
 const MAX_FAILED_BY_IP = 20;
 const TOTP_TOKEN_EXPIRY = '5m';
 
-function signJwt(payload: Record<string, unknown>, jwtConfig: JwtConfig, expiresIn: string): string {
-  return jwt.sign(payload, jwtConfig.secret, {
+function signJwt(
+  payload: Record<string, unknown>,
+  jwtConfig: JwtConfig,
+  expiresIn: SignOptions['expiresIn']
+): string {
+  const options: SignOptions = {
     algorithm: 'HS256',
     issuer: jwtConfig.issuer,
     audience: jwtConfig.audience,
     expiresIn,
-  });
+  };
+  return jwt.sign(payload, jwtConfig.secret, options);
 }
 
 function normalizeEmail(email: string): string {
@@ -412,4 +418,5 @@ export function registerAuthRoutes(app: FastifyInstance, db: Pool, jwtConfig: Jw
     return reply.send({ totp_enabled: result.rows[0].totp_enabled });
   });
 }
+
 
