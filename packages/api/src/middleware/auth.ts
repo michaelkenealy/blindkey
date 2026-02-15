@@ -5,6 +5,7 @@ import { AuthenticationError } from '@blindkey/core';
 export interface JwtPayload {
   sub: string;
   email: string;
+  purpose?: string;
 }
 
 declare module 'fastify' {
@@ -14,7 +15,7 @@ declare module 'fastify' {
   }
 }
 
-export function createJwtMiddleware(secret: string) {
+export function createJwtMiddleware(secret: string, issuer: string, audience: string) {
   return async function jwtMiddleware(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     const authHeader = request.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -25,7 +26,11 @@ export function createJwtMiddleware(secret: string) {
 
     const token = authHeader.slice(7);
     try {
-      const payload = jwt.verify(token, secret) as JwtPayload;
+      const payload = jwt.verify(token, secret, {
+        algorithms: ['HS256'],
+        issuer,
+        audience,
+      }) as JwtPayload;
       request.userId = payload.sub;
       request.userEmail = payload.email;
     } catch {

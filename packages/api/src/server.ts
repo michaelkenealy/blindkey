@@ -27,6 +27,8 @@ export interface ApiServerConfig {
   port: number;
   databaseUrl: string;
   jwtSecret: string;
+  jwtIssuer: string;
+  jwtAudience: string;
 }
 
 export async function createApiServer(config: ApiServerConfig) {
@@ -55,10 +57,14 @@ export async function createApiServer(config: ApiServerConfig) {
   app.get('/health', async () => ({ status: 'ok', service: 'agentvault-api' }));
 
   // Public auth routes (no JWT required)
-  registerAuthRoutes(app, db, config.jwtSecret);
+  registerAuthRoutes(app, db, {
+    secret: config.jwtSecret,
+    issuer: config.jwtIssuer,
+    audience: config.jwtAudience,
+  });
 
   // JWT middleware for protected routes
-  const jwtMiddleware = createJwtMiddleware(config.jwtSecret);
+  const jwtMiddleware = createJwtMiddleware(config.jwtSecret, config.jwtIssuer, config.jwtAudience);
   app.addHook('onRequest', async (request, reply) => {
     const publicPaths = ['/health', '/v1/auth/register', '/v1/auth/login', '/v1/auth/verify-totp'];
     if (publicPaths.some((p) => request.url.startsWith(p))) {
@@ -106,4 +112,5 @@ export async function createApiServer(config: ApiServerConfig) {
 
   return { app, db };
 }
+
 

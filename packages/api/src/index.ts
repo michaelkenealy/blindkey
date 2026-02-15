@@ -4,9 +4,11 @@ import { parsePort, requireEnv, requireStrongSecret } from '@blindkey/core';
 const port = parsePort('API_PORT', 3200);
 const databaseUrl = requireEnv('DATABASE_URL');
 const jwtSecret = requireStrongSecret('JWT_SECRET');
+const jwtIssuer = process.env.JWT_ISSUER ?? 'blindkey-api';
+const jwtAudience = process.env.JWT_AUDIENCE ?? 'blindkey-users';
 
 async function main() {
-  const { app } = await createApiServer({ port, databaseUrl, jwtSecret });
+  const { app } = await createApiServer({ port, databaseUrl, jwtSecret, jwtIssuer, jwtAudience });
 
   try {
     await app.listen({ port, host: '0.0.0.0' });
@@ -18,3 +20,4 @@ async function main() {
 }
 
 main();
+

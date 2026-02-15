@@ -24,6 +24,12 @@ interface SetupTotpBody {
   code: string;
 }
 
+interface JwtConfig {
+  secret: string;
+  issuer: string;
+  audience: string;
+}
+
 interface LoginAttemptRow {
   bucket: string;
   failed_count: number;
@@ -38,6 +44,15 @@ const LOCKOUT_MS = 15 * 60 * 1000;
 const MAX_FAILED_BY_EMAIL = 8;
 const MAX_FAILED_BY_IP = 20;
 const TOTP_TOKEN_EXPIRY = '5m';
+
+function signJwt(payload: Record<string, unknown>, jwtConfig: JwtConfig, expiresIn: string): string {
+  return jwt.sign(payload, jwtConfig.secret, {
+    algorithm: 'HS256',
+    issuer: jwtConfig.issuer,
+    audience: jwtConfig.audience,
+    expiresIn,
+  });
+}
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -114,7 +129,7 @@ async function clearLoginFailures(db: Pool, emailBucket: string, ipBucket: strin
   await db.query('DELETE FROM auth_login_attempts WHERE bucket = ANY($1::text[])', [[emailBucket, ipBucket]]);
 }
 
-export function registerAuthRoutes(app: FastifyInstance, db: Pool, jwtSecret: string) {
+export function registerAuthRoutes(app: FastifyInstance, db: Pool, jwtConfig: JwtConfig) {
   // Register a new user
   app.post<{ Body: RegisterBody }>('/v1/auth/register', async (request, reply) => {
     const { email, password } = request.body;
@@ -140,7 +155,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: Pool, jwtSecret: st
     );
 
     const user = result.rows[0];
-    const token = jwt.sign({ sub: user.id, email: user.email }, jwtSecret, { expiresIn: '24h' });
+    const token = signJwt({ sub: user.id, email: user.email }, jwtConfig, '24h');
 
     return reply.code(201).send({
       user: { id: user.id, email: user.email, created_at: user.created_at },
@@ -181,18 +196,14 @@ export function registerAuthRoutes(app: FastifyInstance, db: Pool, jwtSecret: st
 
     // If 2FA is enabled, return a short-lived TOTP token instead of a full JWT
     if (user.totp_enabled) {
-      const totpToken = jwt.sign(
-        { sub: user.id, email: user.email, purpose: 'totp_verify' },
-        jwtSecret,
-        { expiresIn: TOTP_TOKEN_EXPIRY },
-      );
+      const totpToken = signJwt({ sub: user.id, email: user.email, purpose: 'totp_verify' }, jwtConfig, TOTP_TOKEN_EXPIRY);
       return reply.send({
         requires_totp: true,
         totp_token: totpToken,
       });
     }
 
-    const token = jwt.sign({ sub: user.id, email: user.email }, jwtSecret, { expiresIn: '24h' });
+    const token = signJwt({ sub: user.id, email: user.email }, jwtConfig, '24h');
 
     return reply.send({
       user: { id: user.id, email: user.email, created_at: user.created_at },
@@ -210,7 +221,11 @@ export function registerAuthRoutes(app: FastifyInstance, db: Pool, jwtSecret: st
 
     let payload: { sub: string; email: string; purpose?: string };
     try {
-      payload = jwt.verify(totp_token, jwtSecret) as typeof payload;
+      payload = jwt.verify(totp_token, jwtConfig.secret, {
+        algorithms: ['HS256'],
+        issuer: jwtConfig.issuer,
+        audience: jwtConfig.audience,
+      }) as typeof payload;
     } catch {
       throw new AuthenticationError('Invalid or expired TOTP token. Please log in again.');
     }
@@ -244,7 +259,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: Pool, jwtSecret: st
       throw new AuthenticationError('Invalid TOTP code');
     }
 
-    const token = jwt.sign({ sub: user.id, email: user.email }, jwtSecret, { expiresIn: '24h' });
+    const token = signJwt({ sub: user.id, email: user.email }, jwtConfig, '24h');
 
     return reply.send({
       user: { id: user.id, email: user.email, created_at: user.created_at },
@@ -397,3 +412,4 @@ export function registerAuthRoutes(app: FastifyInstance, db: Pool, jwtSecret: st
     return reply.send({ totp_enabled: result.rows[0].totp_enabled });
   });
 }
+
