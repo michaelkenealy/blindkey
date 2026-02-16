@@ -139,10 +139,15 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
     }
   };
 
-  const addFolder = async () => {
-    if (!newPath) return;
-    const path = newPath.startsWith("/") ? newPath : `/${newPath}`;
-    if (grants.find(g => g.path === path)) return;
+  const addFolder = async (pathToAdd?: string) => {
+    const rawPath = pathToAdd ?? newPath;
+    if (!rawPath) return;
+    // Normalize path - keep Windows paths as-is, add leading / for Unix paths
+    const path = rawPath.includes(":") ? rawPath : (rawPath.startsWith("/") ? rawPath : `/${rawPath}`);
+    if (grants.find(g => g.path === path)) {
+      setError("This folder is already unlocked");
+      return;
+    }
     setError(null);
     try {
       const grant = await createGrant({ path, permissions: ["read"], recursive: true });
@@ -150,6 +155,27 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
       setNewPath("");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to unlock folder");
+    }
+  };
+
+  const browseFolder = async () => {
+    try {
+      // Use File System Access API if available
+      if ('showDirectoryPicker' in window) {
+        const handle = await (window as unknown as { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
+        // Get the full path - this is limited in browsers, but we can use the name
+        // In practice, users may need to type the full path for security reasons
+        const name = handle.name;
+        setNewPath(name);
+        setError("Note: Browser security limits folder access. Please type or paste the full path.");
+      } else {
+        setError("Folder picker not supported in this browser. Please type the path manually.");
+      }
+    } catch (e) {
+      // User cancelled or error
+      if ((e as Error).name !== 'AbortError') {
+        setError("Could not open folder picker");
+      }
     }
   };
 
@@ -402,13 +428,25 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
 
         {/* Add New Folder */}
         <div style={{
-          display: "flex", gap: 8, padding: 4, background: tokens.bg.surface,
+          display: "flex", gap: 8, padding: 8, background: tokens.bg.surface,
           borderRadius: 12, border: `1px solid ${tokens.border.default}`,
         }}>
+          <button onClick={browseFolder} style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "0 14px",
+            background: tokens.bg.elevated, color: tokens.text.secondary,
+            border: `1px solid ${tokens.border.default}`, borderRadius: 8,
+            fontSize: 13, fontWeight: 500, cursor: "pointer",
+            transition: "all 150ms",
+          }}
+            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.borderColor = tokens.border.hover}
+            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.borderColor = tokens.border.default}
+          >
+            <Folder size={14} /> Browse
+          </button>
           <input
             value={newPath}
             onChange={e => setNewPath(e.target.value)}
-            placeholder="/path/to/folder"
+            placeholder="C:\Users\... or /home/..."
             style={{
               flex: 1, padding: "12px 14px", borderRadius: 8,
               background: tokens.bg.input, border: "none", outline: "none",
@@ -417,7 +455,7 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
             }}
             onKeyDown={e => e.key === "Enter" && addFolder()}
           />
-          <button onClick={addFolder} disabled={!newPath} style={{
+          <button onClick={() => addFolder()} disabled={!newPath} style={{
             display: "flex", alignItems: "center", gap: 6, padding: "0 20px",
             background: newPath ? tokens.accent.base : tokens.bg.elevated,
             color: newPath ? tokens.text.inverse : tokens.text.tertiary,
@@ -1941,6 +1979,18 @@ export default function BlindKeyDashboard() {
 
   // Filesystem grants (persisted via API)
   const [grants, setGrants] = useState<FsGrant[]>([]);
+
+  // Auto-login for local mode
+  useEffect(() => {
+    if (!authed) {
+      // Try to auto-login with local API
+      login("local@blindkey", "local").then(() => {
+        setAuthed(true);
+      }).catch(() => {
+        // Not in local mode or login failed - show login screen
+      });
+    }
+  }, [authed]);
 
   const refreshSecrets = useCallback(async () => {
     try {
