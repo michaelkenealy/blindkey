@@ -171,21 +171,21 @@ export async function createSecret(input: {
 }
 
 export async function deleteSecret(id: string): Promise<void> {
-  await api<void>(`/secrets/${id}`, { method: 'DELETE' });
+  await api<void>(`/secrets/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export async function updateSecret(
   id: string,
   updates: { allowed_domains?: string[] | null; injection_ttl_seconds?: number },
 ): Promise<SecretMetadata> {
-  return api<SecretMetadata>(`/secrets/${id}`, {
+  return api<SecretMetadata>(`/secrets/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
   });
 }
 
 export async function rotateSecret(id: string, plaintextValue: string): Promise<SecretMetadata> {
-  return api<SecretMetadata>(`/secrets/${id}/rotate`, {
+  return api<SecretMetadata>(`/secrets/${encodeURIComponent(id)}/rotate`, {
     method: 'POST',
     body: JSON.stringify({ plaintext_value: plaintextValue }),
   });

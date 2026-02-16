@@ -127,17 +127,17 @@ async function main() {
     });
   });
 
-  app.delete<{ Params: { id: string } }>('/v1/secrets/:id', async (request, reply) => {
-    const { id } = request.params;
+  app.delete<{ Params: { '*': string } }>('/v1/secrets/*', async (request, reply) => {
+    const id = decodeURIComponent(request.params['*']);
     await vault.store.deleteSecret(id);
     vault.audit.log({ action: 'secret_deleted', vault_ref: id, granted: true });
     return reply.code(204).send();
   });
 
-  app.post<{ Params: { id: string }; Body: { plaintext_value: string } }>(
-    '/v1/secrets/:id/rotate',
+  app.post<{ Params: { '*': string }; Body: { plaintext_value: string } }>(
+    '/v1/secrets/*/rotate',
     async (request, reply) => {
-      const { id } = request.params;
+      const id = decodeURIComponent(request.params['*']);
       const { plaintext_value } = request.body;
 
       if (!plaintext_value) {
