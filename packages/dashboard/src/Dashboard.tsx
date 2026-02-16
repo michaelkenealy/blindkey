@@ -13,6 +13,22 @@ import {
   type AuditRow, type PolicyRow,
 } from "./api/vault-client";
 
+// ─── Service Presets ───
+const SERVICE_PRESETS = [
+  { name: "Custom", domain: "", keyPrefix: "" },
+  { name: "Anthropic", domain: "api.anthropic.com", keyPrefix: "ANTHROPIC_API_KEY" },
+  { name: "OpenAI", domain: "api.openai.com", keyPrefix: "OPENAI_API_KEY" },
+  { name: "Google AI", domain: "generativelanguage.googleapis.com", keyPrefix: "GOOGLE_API_KEY" },
+  { name: "OpenRouter", domain: "openrouter.ai", keyPrefix: "OPENROUTER_API_KEY" },
+  { name: "Groq", domain: "api.groq.com", keyPrefix: "GROQ_API_KEY" },
+  { name: "Mistral", domain: "api.mistral.ai", keyPrefix: "MISTRAL_API_KEY" },
+  { name: "Cohere", domain: "api.cohere.ai", keyPrefix: "COHERE_API_KEY" },
+  { name: "Stripe", domain: "api.stripe.com", keyPrefix: "STRIPE_API_KEY" },
+  { name: "GitHub", domain: "api.github.com", keyPrefix: "GITHUB_TOKEN" },
+  { name: "Slack", domain: "slack.com", keyPrefix: "SLACK_TOKEN" },
+  { name: "Twilio", domain: "api.twilio.com", keyPrefix: "TWILIO_API_KEY" },
+];
+
 // ─── Design Tokens ───
 const tokens = {
   bg: { root: "#0a0a0a", surface: "#111111", elevated: "#1a1a1a", input: "#141414" },
@@ -79,9 +95,18 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
   const [newPath, setNewPath] = useState("");
+  const [selectedService, setSelectedService] = useState(SERVICE_PRESETS[0]);
   const [copied, setCopied] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleServiceChange = (serviceName: string) => {
+    const preset = SERVICE_PRESETS.find(s => s.name === serviceName) ?? SERVICE_PRESETS[0];
+    setSelectedService(preset);
+    if (preset.keyPrefix && !newKey) {
+      setNewKey(preset.keyPrefix);
+    }
+  };
 
   const addSecret = async () => {
     if (!newKey || !newVal) return;
@@ -90,11 +115,12 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
     try {
       await createSecret({
         name: newKey.toUpperCase(),
-        service: "Custom",
+        service: selectedService.name,
         secret_type: "api_key",
         plaintext_value: newVal,
+        allowed_domains: selectedService.domain ? [selectedService.domain] : undefined,
       });
-      setNewKey(""); setNewVal("");
+      setNewKey(""); setNewVal(""); setSelectedService(SERVICE_PRESETS[0]);
       await refreshSecrets();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to save key");
@@ -246,41 +272,64 @@ const SimpleDashboard = ({ secrets, refreshSecrets, loading, grants, setGrants, 
 
         {/* Add New Key */}
         <div style={{
-          display: "flex", gap: 8, padding: 4, background: tokens.bg.surface,
+          display: "flex", flexDirection: "column", gap: 8, padding: 12, background: tokens.bg.surface,
           borderRadius: 12, border: `1px solid ${tokens.border.default}`,
         }}>
-          <input
-            value={newKey}
-            onChange={e => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
-            placeholder="KEY_NAME"
-            style={{
-              flex: "0 0 140px", padding: "12px 14px", borderRadius: 8,
-              background: tokens.bg.input, border: "none", outline: "none",
-              fontFamily: "'Geist Mono', monospace", fontSize: 13,
-              color: tokens.text.primary,
-            }}
-          />
-          <input
-            value={newVal}
-            onChange={e => setNewVal(e.target.value)}
-            placeholder="Paste your API key here..."
-            type="password"
-            style={{
-              flex: 1, padding: "12px 14px", borderRadius: 8,
-              background: tokens.bg.input, border: "none", outline: "none",
-              fontSize: 13, color: tokens.text.primary,
-            }}
-          />
-          <button onClick={addSecret} disabled={!newKey || !newVal || saving} style={{
-            display: "flex", alignItems: "center", gap: 6, padding: "0 20px",
-            background: newKey && newVal && !saving ? tokens.accent.base : tokens.bg.elevated,
-            color: newKey && newVal && !saving ? tokens.text.inverse : tokens.text.tertiary,
-            border: "none", borderRadius: 8, fontSize: 14, fontWeight: 500,
-            cursor: newKey && newVal && !saving ? "pointer" : "default",
-            transition: "all 150ms",
-          }}>
-            {saving ? <><Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Saving...</> : <><Plus size={16} /> Add</>}
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <select
+              value={selectedService.name}
+              onChange={e => handleServiceChange(e.target.value)}
+              style={{
+                flex: "0 0 130px", padding: "12px 10px", borderRadius: 8,
+                background: tokens.bg.input, border: "none", outline: "none",
+                fontSize: 13, color: tokens.text.primary, cursor: "pointer",
+              }}
+            >
+              {SERVICE_PRESETS.map(s => (
+                <option key={s.name} value={s.name}>{s.name}</option>
+              ))}
+            </select>
+            <input
+              value={newKey}
+              onChange={e => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
+              placeholder="KEY_NAME"
+              style={{
+                flex: "0 0 160px", padding: "12px 14px", borderRadius: 8,
+                background: tokens.bg.input, border: "none", outline: "none",
+                fontFamily: "'Geist Mono', monospace", fontSize: 13,
+                color: tokens.text.primary,
+              }}
+            />
+            <input
+              value={newVal}
+              onChange={e => setNewVal(e.target.value)}
+              placeholder="Paste your API key here..."
+              type="password"
+              style={{
+                flex: 1, padding: "12px 14px", borderRadius: 8,
+                background: tokens.bg.input, border: "none", outline: "none",
+                fontSize: 13, color: tokens.text.primary,
+              }}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {selectedService.domain && (
+              <span style={{ fontSize: 12, color: tokens.text.tertiary }}>
+                Domain: <span style={{ color: tokens.accent.base }}>{selectedService.domain}</span>
+              </span>
+            )}
+            <button onClick={addSecret} disabled={!newKey || !newVal || saving} style={{
+              marginLeft: "auto",
+              display: "flex", alignItems: "center", gap: 6, padding: "10px 20px",
+              background: newKey && newVal && !saving ? tokens.accent.base : tokens.bg.elevated,
+              color: newKey && newVal && !saving ? tokens.text.inverse : tokens.text.tertiary,
+              border: "none", borderRadius: 8, fontSize: 14, fontWeight: 500,
+              cursor: newKey && newVal && !saving ? "pointer" : "default",
+              transition: "all 150ms",
+            }}>
+              {saving ? <><Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Saving...</> : <><Plus size={16} /> Add</>}
+            </button>
+          </div>
         </div>
       </div>
 

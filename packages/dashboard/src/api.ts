@@ -29,9 +29,12 @@ function setToken(t: string): void {
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> | undefined),
   };
+  // Only set Content-Type for requests with a body
+  if (options.body) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
