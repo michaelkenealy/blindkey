@@ -81,7 +81,8 @@ ${BOLD}${CYAN}╔═════════════════════
         console.log(`    ${DIM}bk add NAME VALUE${RESET} - Add a new secret`);
         console.log(`    ${DIM}bk unlock ./path${RESET}  - Grant filesystem access`);
         console.log(`    ${DIM}bk doctor${RESET}        - Check setup health`);
-        console.log(`    ${DIM}bk serve${RESET}         - Start MCP server\n`);
+        console.log(`    ${DIM}bk serve${RESET}         - Start local API server`);
+        console.log(`    ${DIM}bk serve --mcp${RESET}   - Start MCP server for Claude\n`);
       } else {
         console.log(`  ${CYAN}Quick start:${RESET}`);
         console.log(`    ${DIM}docker compose up -d${RESET}  - Start services`);

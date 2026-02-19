@@ -45,11 +45,22 @@ The AI agent only sees `bk://stripe` - never the actual API key.
 - **Blind Injection** - Agents reference `bk://ref` tokens, never real credentials
 - **Domain Allowlisting** - Each secret specifies which domains can receive it
 - **Filesystem Gating** - Default-deny access to files and directories
+- **Content Scanning** - Writes are scanned for accidentally leaked secrets and PII
 - **Audit Logging** - Tamper-evident hash chain of all credential access
 - **Policy Engine** - Rate limits, regex blocklists, time-based access
 - **MCP Integration** - Works with Claude and other MCP-compatible AI assistants
+- **OpenClaw Plugin** - Native plugin for OpenClaw-powered agents
 
 ## Quick Start
+
+### Requirements
+
+- Node.js 18+
+- npm 8+
+
+> **Windows:** `better-sqlite3` requires Visual Studio Build Tools for native compilation.
+> **macOS:** Xcode Command Line Tools (`xcode-select --install`).
+> **Linux:** `build-essential` package.
 
 ### Installation
 
@@ -58,20 +69,23 @@ The AI agent only sees `bk://stripe` - never the actual API key.
 npm install -g @blindkey/cli
 
 # Or use npx (no install required)
-npx @blindkey/cli init
+npx @blindkey/cli setup
 ```
 
 ### Interactive Setup
 
 ```bash
-# Run the setup wizard
+# Run the guided setup wizard (recommended)
+bk setup
+
+# Or use the quick init
 bk init
 
 # The wizard will:
-# 1. Create your encrypted vault at ~/.blindkey
-# 2. Generate a master key (BACK THIS UP!)
-# 3. Help you add your first secret
-# 4. Optionally configure MCP for Claude
+# 1. Let you choose Local or Docker mode
+# 2. Create your encrypted vault at ~/.blindkey
+# 3. Generate a master key (BACK THIS UP!)
+# 4. Help you add your first secret
 ```
 
 ### Add Secrets
@@ -119,14 +133,17 @@ bk grants
 
 ```
 packages/
-├── cli/              # Command-line interface (bk command)
-├── core/             # Cryptographic primitives & types
-├── local-vault/      # SQLite-based encrypted storage
-├── local-api/        # Local HTTP server bridging dashboard → vault.db
-├── proxy/            # HTTP proxy with credential injection
-├── dashboard/        # React admin UI
-├── openclaw-plugin/  # OpenClaw agent plugin
-└── openclaw-skill/   # MCP server for Claude integration
+├── cli/               # Command-line interface (bk command)
+├── core/              # Cryptographic primitives & types
+├── local-vault/       # SQLite-based encrypted storage
+├── local-api/         # Local HTTP server bridging dashboard to vault.db
+├── openclaw-plugin/   # OpenClaw agent plugin (tool registration)
+├── openclaw-skill/    # MCP server for Claude integration
+├── dashboard/         # React admin UI
+├── proxy/             # HTTP proxy with credential injection
+├── fs-gate/           # Filesystem access control library
+├── content-scanner/   # Secret & PII detection in content
+└── chat-bridge/       # LLM chat bridge with Slack integration
 ```
 
 ## OpenClaw Plugin
@@ -163,47 +180,64 @@ The plugin registers these tools:
 
 ```
 You: "Call the Stripe API to list charges using bk://stripe-abc123"
-Agent: (calls bk_proxy → credential injected → response returned)
+Agent: (calls bk_proxy -> credential injected -> response returned)
 ```
 
-## Dashboard (Local Mode)
+## Dashboard
 
-The dashboard can manage secrets and filesystem grants stored in `~/.blindkey/vault.db` without requiring PostgreSQL.
+The dashboard provides a visual interface for managing secrets, filesystem grants, policies, and the audit log.
 
-### Start the dashboard with local vault
+### Start the dashboard (local mode)
 
 ```bash
-# Terminal 1: Start the vault bridge server (wraps ~/.blindkey/vault.db)
-npm run bridge -w @blindkey/dashboard    # runs on http://localhost:3401
+# Terminal 1: Start the local API server
+bk serve                                    # runs on http://127.0.0.1:3200
 
 # Terminal 2: Start the dashboard
-npm run dev -w @blindkey/dashboard       # opens http://localhost:3400
+npm run dev -w @blindkey/dashboard          # opens http://localhost:3400
 ```
 
-The dashboard features:
+The dashboard auto-detects local mode and skips the login screen.
+
+### Dashboard features
+
 - **Secrets management** - Add, rotate, delete API keys with domain restrictions
 - **Filesystem gating** - Visual tree view, quick unlock for common paths, one-click revoke
 - **Security policies** - Manage content scanning rules, add custom regex patterns, toggle on/off
 - **Audit timeline** - Color-coded timeline of all agent actions, filter by type, export CSV/JSON
-- **2FA** - TOTP-based two-factor authentication
 
-All data persists to `~/.blindkey/vault.db` (SQLite) and survives page refreshes.
+All data persists to `~/.blindkey/vault.db` (SQLite).
 
 ## MCP Configuration (Claude Desktop)
 
-```bash
-# Generate MCP config during setup
-bk init --mcp
+BlindKey integrates with Claude Desktop via the Model Context Protocol (MCP).
 
-# Or manually configure in Claude Desktop settings:
+```bash
+# Generate MCP config during init
+bk init --mcp
 ```
+
+Or manually add to your Claude Desktop settings:
 
 ```json
 {
   "mcpServers": {
     "blindkey": {
       "command": "npx",
-      "args": ["@blindkey/cli", "serve"]
+      "args": ["@blindkey/cli", "serve", "--mcp"]
+    }
+  }
+}
+```
+
+If you've installed BlindKey globally (`npm install -g @blindkey/cli`):
+
+```json
+{
+  "mcpServers": {
+    "blindkey": {
+      "command": "bk",
+      "args": ["serve", "--mcp"]
     }
   }
 }
@@ -213,16 +247,21 @@ bk init --mcp
 
 | Command | Description |
 |---------|-------------|
-| `bk init` | Interactive setup wizard |
+| `bk setup` | Guided setup wizard (choose Local or Docker mode) |
+| `bk init` | Quick vault initialization |
 | `bk add <name> <value>` | Store a new secret |
 | `bk list` | List all stored secrets |
-| `bk get <name>` | Retrieve a secret (for debugging) |
 | `bk rm <name>` | Delete a secret |
+| `bk rotate <name>` | Rotate a secret's value |
 | `bk unlock <path>` | Grant filesystem access |
+| `bk lock <path>` | Revoke filesystem access |
 | `bk grants` | List active filesystem grants |
+| `bk policy` | Manage content policies |
 | `bk audit` | View audit log |
+| `bk serve` | Start local API server (port 3200) |
+| `bk serve --mcp` | Start MCP server for Claude |
 | `bk doctor` | Check installation health |
-| `bk serve` | Start MCP server |
+| `bk migrate` | Run database migrations |
 
 ## Security Model
 
@@ -234,6 +273,7 @@ bk init --mcp
 ### Access Control
 - **Domain allowlisting**: Secrets only sent to specified domains
 - **Filesystem gating**: Default-deny with explicit grants
+- **Content scanning**: Writes checked for leaked credentials and PII
 - **Policy engine**: Rate limits, time windows, regex blocklists
 
 ### Audit Trail
@@ -252,6 +292,7 @@ bk init --mcp
 |----------|-------------|---------|
 | `BLINDKEY_DIR` | Vault storage location | `~/.blindkey` |
 | `VAULT_MASTER_KEY` | Master encryption key | Auto-generated |
+| `LOCAL_API_PORT` | Local API server port | `3200` |
 | `POLICY_FAIL_OPEN` | Allow no-policy sessions | `false` |
 
 ## Development
@@ -270,17 +311,6 @@ npm run build
 # Run the CLI locally
 node packages/cli/dist/index.js --help
 ```
-
-## Requirements
-
-- Node.js 18+
-- npm 8+
-
-**Note:** The `better-sqlite3` dependency requires a C++ compiler for native builds. On most systems this works automatically, but you may need:
-
-- **Windows**: Visual Studio Build Tools
-- **macOS**: Xcode Command Line Tools (`xcode-select --install`)
-- **Linux**: `build-essential` package
 
 ## License
 

@@ -163,17 +163,12 @@ ${BOLD}${CYAN}╔═════════════════════
       if (opts.mcp) {
         console.log(`${BOLD}Step 4: Claude MCP Configuration${RESET}\n`);
 
-        const skillPath = join(__dirname, '../../..', 'openclaw-skill/dist/index.js');
-        const masterKey = (await readFile(KEY_FILE, 'utf-8')).trim();
-
         const mcpConfig = {
           mcpServers: {
             blindkey: {
-              command: 'node',
-              args: [skillPath],
-              env: {
-                VAULT_MASTER_KEY: masterKey,
-              },
+              command: 'bk',
+              args: ['serve', '--mcp'],
+              env: {},
             },
           },
         };
@@ -199,7 +194,8 @@ ${BOLD}${CYAN}╔═════════════════════
       console.log(`    ${DIM}bk add NAME VALUE${RESET} - Add a new secret`);
       console.log(`    ${DIM}bk unlock ./path${RESET}  - Grant filesystem access`);
       console.log(`    ${DIM}bk doctor${RESET}        - Check setup health`);
-      console.log(`    ${DIM}bk serve${RESET}         - Start MCP server\n`);
+      console.log(`    ${DIM}bk serve${RESET}         - Start local API server`);
+      console.log(`    ${DIM}bk serve --mcp${RESET}   - Start MCP server for Claude\n`);
 
       console.log(`  ${CYAN}Documentation:${RESET}`);
       console.log(`    ${DIM}https://github.com/michaelkenealy/blindkey${RESET}\n`);

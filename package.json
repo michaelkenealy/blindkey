@@ -12,8 +12,8 @@
     "dev": "turbo dev",
     "lint": "turbo lint",
     "clean": "turbo clean",
-    "publish:dry": "npm run build && npm publish --workspace=@blindkey/core --dry-run && npm publish --workspace=@blindkey/local-vault --dry-run && npm publish --workspace=@blindkey/openclaw-skill --dry-run && npm publish --workspace=@blindkey/cli --dry-run",
-    "publish:all": "npm run build && npm publish --workspace=@blindkey/core --access public && npm publish --workspace=@blindkey/local-vault --access public && npm publish --workspace=@blindkey/openclaw-skill --access public && npm publish --workspace=@blindkey/cli --access public"
+    "publish:dry": "npm run build && npm publish --workspace=@blindkey/core --dry-run && npm publish --workspace=@blindkey/local-vault --dry-run && npm publish --workspace=@blindkey/openclaw-skill --dry-run && npm publish --workspace=@blindkey/openclaw-plugin --dry-run && npm publish --workspace=@blindkey/cli --dry-run",
+    "publish:all": "npm run build && npm publish --workspace=@blindkey/core --access public && npm publish --workspace=@blindkey/local-vault --access public && npm publish --workspace=@blindkey/openclaw-skill --access public && npm publish --workspace=@blindkey/openclaw-plugin --access public && npm publish --workspace=@blindkey/cli --access public"
   },
   "devDependencies": {
     "turbo": "^2.3.0",

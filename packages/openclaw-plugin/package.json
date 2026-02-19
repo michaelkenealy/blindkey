@@ -1,17 +1,45 @@
 {
   "name": "@blindkey/openclaw-plugin",
   "version": "0.1.0",
-  "private": true,
+  "description": "OpenClaw plugin for BlindKey - secure credential injection and filesystem gating for AI agents",
   "type": "module",
   "main": "dist/index.js",
+  "files": [
+    "dist",
+    "openclaw.plugin.json"
+  ],
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "openclaw",
+    "blindkey",
+    "credentials",
+    "security",
+    "ai-agents",
+    "vault",
+    "plugin"
+  ],
+  "author": "Michael Kenealy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michaelkenealy/blindkey.git",
+    "directory": "packages/openclaw-plugin"
+  },
+  "homepage": "https://github.com/michaelkenealy/blindkey#openclaw-plugin",
+  "bugs": {
+    "url": "https://github.com/michaelkenealy/blindkey/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
-    "@blindkey/core": "*",
-    "@blindkey/local-vault": "*",
-    "@sinclair/typebox": "^0.34.48"
+    "@blindkey/core": "0.1.0",
+    "@blindkey/local-vault": "0.1.0",
+    "@sinclair/typebox": "^0.34.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
