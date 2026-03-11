@@ -44,7 +44,7 @@ export interface ScanOptions {
 
 export const DEFAULT_RULES: ScanRule[] = [
   {
-    pattern: '(?i)(api[_-]?key|secret[_-]?key|password|token)\\s*[:=]\\s*["\']?[A-Za-z0-9_\\-]{16,}',
+    pattern: '(api[_-]?key|secret[_-]?key|password|token|API[_-]?KEY|SECRET[_-]?KEY|PASSWORD|TOKEN|Api[_-]?Key|Secret[_-]?Key|Password|Token)\\s*[:=]\\s*["\']?[A-Za-z0-9_\\-]{16,}',
     message: 'Hardcoded API key or secret detected',
     severity: 'block',
     category: 'credential',

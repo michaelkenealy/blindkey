@@ -6,17 +6,18 @@
  * 3. Limiting pattern complexity
  */
 
-// Patterns known to cause catastrophic backtracking
+// Patterns known to cause catastrophic backtracking.
+// These are tested against raw pattern strings, so we match literal characters.
 const DANGEROUS_PATTERNS = [
   /\(\.\*\)\+/,           // (.*)+
-  /\(\[^\]]*\)\+/,        // ([^])+
-  /\(\.+\)\+/,            // (.+)+
-  /\(\w+\)\+/,            // (\w+)+
-  /\(\s+\)\+/,            // (\s+)+
-  /\(a\+\)\+/,            // (a+)+
+  /\(\.\+\)\+/,           // (.+)+
+  /\(\[[^\]]*\][+*]\)\+/, // ([^...]*)+  or ([^...]+)+
+  /\(\\w\+\)\+/,          // (\w+)+
+  /\(\\s\+\)\+/,          // (\s+)+
+  /\([a-zA-Z]\+\)\+/,     // (a+)+  or (X+)+ for any single char
   /\(\.\*\)\*/,           // (.*)*
   /\(\.\+\)\*/,           // (.+)*
-  /\(\[^\/\]\*\)\+/,      // ([^/]*)+
+  /\(\[[^\]]*\]\*\)\+/,   // ([^/]*)+  or ([^x]*)+
 ];
 
 // Maximum allowed quantifier repetitions

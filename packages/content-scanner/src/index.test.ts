@@ -36,12 +36,11 @@ describe('content-scanner', () => {
       expect(result.allowed).toBe(false);
     });
 
-    it('first default rule uses (?i) which is invalid JS regex — silently skipped', () => {
-      // BUG: DEFAULT_RULES[0] uses (?i) inline flag which JS doesn't support.
-      // The pattern fails to compile and is silently skipped.
-      // This means generic "api_key = value" detection doesn't work.
-      const result = scanContent('api_key = "abcdef1234567890abcdef"');
-      expect(result.allowed).toBe(true); // Documents the bug
+    it('should detect hardcoded credentials (case variants)', () => {
+      expect(scanContent('api_key = "abcdef1234567890abcdef"').allowed).toBe(false);
+      expect(scanContent('API_KEY = "abcdef1234567890abcdef"').allowed).toBe(false);
+      expect(scanContent('Secret_Key = "abcdef1234567890abcdef"').allowed).toBe(false);
+      expect(scanContent('TOKEN = "abcdef1234567890abcdef"').allowed).toBe(false);
     });
 
     it('should allow clean content', () => {
@@ -56,7 +55,9 @@ describe('content-scanner', () => {
 
     it('should detect Google/Gemini API keys', () => {
       // Pattern expects AIzaSy + exactly 33 chars
-      const result = scanContent('key: AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ1234567');
+      // Use string concatenation to avoid GitHub secret scanning false positive
+      const fakeKey = 'AIzaSy' + 'X'.repeat(33);
+      const result = scanContent('key: ' + fakeKey);
       expect(result.allowed).toBe(false);
     });
 

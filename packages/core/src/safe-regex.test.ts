@@ -15,13 +15,10 @@ describe('safe-regex', () => {
       expect(result.reason).toContain('nested quantifiers');
     });
 
-    it('does not currently catch (.+)+ — known gap in ReDoS detection', () => {
-      // BUG: (.+)+ is dangerous but DANGEROUS_PATTERNS uses /\(\.+\)\+/
-      // which matches the escaped literal "(.+)+" but the regex test against
-      // the raw pattern string doesn't match because the backslash escaping
-      // doesn't align. This should be fixed in a future PR.
+    it('should reject (.+)+ nested quantifier', () => {
       const result = validateRegexPattern('(.+)+');
-      expect(result.safe).toBe(true); // Documents current (buggy) behavior
+      expect(result.safe).toBe(false);
+      expect(result.reason).toContain('nested quantifiers');
     });
 
     it('should reject (.*)*', () => {
