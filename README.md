@@ -47,7 +47,7 @@ The AI agent only sees `bk://stripe` - never the actual API key.
 - **Filesystem Gating** - Default-deny access to files and directories
 - **Content Scanning** - Writes are scanned for accidentally leaked secrets and PII
 - **Audit Logging** - Tamper-evident hash chain of all credential access
-- **Policy Engine** - Rate limits, regex blocklists, time-based access
+- **Policy Engine** - Regex blocklists, content scanning rules
 - **MCP Integration** - Works with Claude and other MCP-compatible AI assistants
 - **OpenClaw Plugin** - Native plugin for OpenClaw-powered agents
 
@@ -140,10 +140,8 @@ packages/
 ├── openclaw-plugin/   # OpenClaw agent plugin (tool registration)
 ├── openclaw-skill/    # MCP server for Claude integration
 ├── dashboard/         # React admin UI
-├── proxy/             # HTTP proxy with credential injection
 ├── fs-gate/           # Filesystem access control library
-├── content-scanner/   # Secret & PII detection in content
-└── chat-bridge/       # LLM chat bridge with Slack integration
+└── content-scanner/   # Secret & PII detection in content
 ```
 
 ## OpenClaw Plugin
@@ -274,7 +272,7 @@ If you've installed BlindKey globally (`npm install -g @blindkey/cli`):
 - **Domain allowlisting**: Secrets only sent to specified domains
 - **Filesystem gating**: Default-deny with explicit grants
 - **Content scanning**: Writes checked for leaked credentials and PII
-- **Policy engine**: Rate limits, time windows, regex blocklists
+- **Policy engine**: Regex blocklists, content scanning rules
 
 ### Audit Trail
 - All access logged with cryptographic hash chain

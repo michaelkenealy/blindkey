@@ -69,13 +69,13 @@ export function checkGrant(
  */
 function matchPattern(pattern: string, filePath: string): boolean {
   const normalized = normalizePath(filePath);
-  // Convert glob to regex
+  // Convert glob to regex — escape dots BEFORE converting globstar to .*
   const regexStr = pattern
     .replace(/\\/g, '/')
+    .replace(/\./g, '\\.')
     .replace(/\*\*/g, '{{GLOBSTAR}}')
     .replace(/\*/g, '[^/]*')
-    .replace(/\{\{GLOBSTAR\}\}/g, '.*')
-    .replace(/\./g, '\\.');
+    .replace(/\{\{GLOBSTAR\}\}/g, '.*');
   return new RegExp(`(^|/)${regexStr}$`).test(normalized);
 }
 

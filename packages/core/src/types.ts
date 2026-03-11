@@ -203,9 +203,6 @@ export interface ProxyResponse {
 export type AuditAction =
   | 'request_allowed'
   | 'request_denied'
-  | 'approval_requested'
-  | 'approval_granted'
-  | 'approval_denied'
   | 'session_created'
   | 'session_revoked'
   | 'secret_created'
@@ -222,23 +219,6 @@ export interface AuditEntry {
   policy_result: Record<string, unknown> | null;
   response_status: number | null;
   latency_ms: number | null;
-  created_at: Date;
-}
-
-// ── Approval Types ──
-
-export type ApprovalStatus = 'pending' | 'approved' | 'denied' | 'expired';
-
-export interface ApprovalRequest {
-  id: string;
-  user_id: string;
-  session_id: string;
-  vault_ref: string;
-  request_payload: Record<string, unknown>;
-  policy_trigger: string;
-  status: ApprovalStatus;
-  expires_at: Date;
-  resolved_at: Date | null;
   created_at: Date;
 }
 

@@ -65,8 +65,7 @@ Create a reusable scanner with custom rules optionally merged with defaults.
 ## Integration
 
 This package is used by:
-- `@blindkey/openclaw-secure-backend` - OpenClaw-Secure backend adapter
-- `@blindkey/aquaman-backend` - Aquaman backend adapter
-- `@blindkey/fs-proxy` - Filesystem proxy content scanning
+- `@blindkey/openclaw-plugin` - OpenClaw agent plugin
+- `@blindkey/openclaw-skill` - MCP server for Claude integration
 
 It can also be used standalone by any tool that needs to prevent credential leaks in content.

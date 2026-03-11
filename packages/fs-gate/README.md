@@ -91,8 +91,7 @@ In-memory grant manager with `grant()`, `revoke()`, `listGrants()`, `checkAccess
 ## Integration
 
 This package is used by:
-- `@blindkey/openclaw-secure-backend` - OpenClaw-Secure backend adapter
-- `@blindkey/aquaman-backend` - Aquaman backend adapter
-- `@blindkey/fs-proxy` - Filesystem proxy grant enforcement
+- `@blindkey/openclaw-plugin` - OpenClaw agent plugin
+- `@blindkey/openclaw-skill` - MCP server for Claude integration
 
 It can also be used standalone by any tool that needs path-based filesystem access control.

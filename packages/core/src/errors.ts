@@ -151,20 +151,3 @@ export class FsAccessDeniedError extends BlindKeyError {
   }
 }
 
-export class ApprovalRequiredError extends BlindKeyError {
-  public readonly approvalId: string;
-
-  constructor(approvalId: string) {
-    super('Request requires human approval. Waiting for user decision.', 'approval_required', 202);
-    this.name = 'ApprovalRequiredError';
-    this.approvalId = approvalId;
-  }
-
-  toJSON() {
-    return {
-      error: this.code,
-      message: this.message,
-      approval_id: this.approvalId,
-    };
-  }
-}
