@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Verify no test files in dist
+        run: |
+          count=$(find packages/*/dist -name '*.test.*' 2>/dev/null | wc -l)
+          if [ "$count" -gt 0 ]; then
+            echo "ERROR: Test files found in dist/"
+            find packages/*/dist -name '*.test.*'
+            exit 1
+          fi
+
+      - name: Dry-run publish check
+        run: |
+          for pkg in core local-vault openclaw-skill openclaw-plugin cli; do
+            echo "=== @blindkey/$pkg ==="
+            npm pack --workspace=@blindkey/$pkg --dry-run 2>&1 | tail -3
+          done
