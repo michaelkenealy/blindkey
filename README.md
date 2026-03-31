@@ -12,15 +12,18 @@ When AI agents make API calls on your behalf, they typically need direct access 
 
 ### How BlindKey Compares
 
-Other tools focus on credential injection. BlindKey goes further:
+Most tools either let agents see credentials (password managers) or focus on a single layer (proxy-only, sandbox-only). BlindKey is the only local-first tool that combines blind injection, filesystem gating, content scanning, and audit in one package.
 
-| Feature | 1Password | Aquaman | OpenClaw-Secure | **BlindKey** |
-|---------|-----------|---------|-----------------|--------------|
-| Credential injection | Yes | Yes | Yes | **Yes** |
-| **Filesystem gating** | No | No | No | **Yes** |
-| **Content scanning** | No | No | No | **Yes** |
-| **Visual dashboard** | No | No | No | **Yes** |
-| **Policy engine** | No | No | No | **Yes** |
+| Feature | 1Password MCP | OneCLI | nono | HashiCorp Vault | **BlindKey** |
+|---------|---------------|--------|------|-----------------|--------------|
+| Blind injection (agent never sees key) | No | Yes | Yes | No | **Yes** |
+| MCP integration | Yes | No | No | Yes | **Yes** |
+| Filesystem gating | No | No | Kernel | No | **Yes** |
+| Content scanning (leak prevention) | No | No | No | No | **Yes** |
+| Audit trail | No | No | Sigstore | Yes | **Yes** |
+| Visual dashboard | No | No | No | Yes | **Yes** |
+| Local-first (no cloud required) | No | Yes | Yes | No | **Yes** |
+| Policy engine | No | No | Partial | Yes | **Yes** |
 
 BlindKey answers: *"What can the AI agent access?"* not just *"How does it authenticate?"*
 
