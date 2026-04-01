@@ -1,7 +1,13 @@
 {
   "name": "@blindkey/local-api",
   "version": "0.1.0",
-  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/michaelkenealy/blindkey",
+    "directory": "packages/local-api"
+  },
+  "files": ["dist"],
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -14,8 +20,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@blindkey/core": "*",
-    "@blindkey/local-vault": "*",
+    "@blindkey/core": "0.1.0",
+    "@blindkey/local-vault": "0.1.0",
     "@fastify/cors": "^10.0.0",
     "fastify": "^5.2.0"
   },

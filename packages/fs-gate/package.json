@@ -1,7 +1,13 @@
 {
   "name": "@blindkey/fs-gate",
   "version": "0.1.0",
-  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/michaelkenealy/blindkey",
+    "directory": "packages/fs-gate"
+  },
+  "files": ["dist"],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
