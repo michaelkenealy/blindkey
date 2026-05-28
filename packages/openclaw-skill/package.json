@@ -40,6 +40,7 @@
   "dependencies": {
     "@blindkey/core": "0.1.0",
     "@blindkey/local-vault": "0.1.0",
+    "@blindkey/providers": "0.1.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "zod": "^3.24.0"
   },

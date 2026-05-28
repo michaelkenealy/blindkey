@@ -15,8 +15,11 @@ import {
   DEFAULT_FS_POLICIES, checkFsAccess as sharedCheckFsAccess,
 } from '@blindkey/local-vault';
 import { evaluateFsPolicy, type FsRequest } from '@blindkey/core';
+import { getProvider } from '@blindkey/providers';
 
 let vault: LocalVault;
+const ALLOWED_PROXY_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
+const PROXY_TIMEOUT_MS = 30_000;
 
 const server = new McpServer({
   name: 'blindkey',
@@ -27,6 +30,17 @@ const server = new McpServer({
 // with project references. Bind to an untyped wrapper to avoid deep inference.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const tool: (...args: any[]) => any = server.tool.bind(server);
+
+function hostnameAllowed(hostname: string, allowedDomains: string[]): boolean {
+  const actual = hostname.toLowerCase();
+  return allowedDomains.some((domain) => {
+    const normalized = domain.toLowerCase();
+    if (normalized.startsWith('*.')) {
+      return actual.endsWith(normalized.slice(1)) || actual === normalized.slice(2);
+    }
+    return actual === normalized;
+  });
+}
 
 // ── Credential Proxy Tool ──
 
@@ -44,6 +58,21 @@ tool(
     const headers = rawHeaders ? JSON.parse(rawHeaders) as Record<string, string> : undefined;
     const body = rawBody ? JSON.parse(rawBody) as unknown : undefined;
     try {
+      const upperMethod = method.toUpperCase();
+      if (!ALLOWED_PROXY_METHODS.has(upperMethod)) {
+        return { content: [{ type: 'text' as const, text: `Error: Method "${method}" is not allowed` }], isError: true };
+      }
+
+      let parsedTarget: URL;
+      try {
+        parsedTarget = new URL(url);
+      } catch {
+        return { content: [{ type: 'text' as const, text: 'Error: Invalid URL' }], isError: true };
+      }
+      if (parsedTarget.protocol !== 'https:' && parsedTarget.protocol !== 'http:') {
+        return { content: [{ type: 'text' as const, text: 'Error: Only http:// and https:// URLs are allowed' }], isError: true };
+      }
+
       const result = await vault.store.getSecret(vault_ref);
       if (!result) {
         vault.audit.log({ action: 'proxy_request', vault_ref, granted: false, blocking_rule: 'not_found' });
@@ -51,45 +80,50 @@ tool(
       }
 
       const { secret, plaintext } = result;
+      const provider = getProvider(secret.service);
+      const hostname = parsedTarget.hostname;
 
-      // Domain check
-      if (secret.allowed_domains && secret.allowed_domains.length > 0) {
-        const hostname = new URL(url).hostname;
-        const allowed = secret.allowed_domains.some(d => {
-          if (d.startsWith('*.')) {
-            return hostname.endsWith(d.slice(1)) || hostname === d.slice(2);
-          }
-          return hostname === d;
-        });
-        if (!allowed) {
-          vault.audit.log({ action: 'proxy_request', vault_ref, granted: false, blocking_rule: 'domain_not_allowed', detail: JSON.stringify({ url, hostname }) });
-          return { content: [{ type: 'text' as const, text: `Error: Domain "${hostname}" not in allowed list for this secret` }], isError: true };
-        }
+      if (provider && provider.allowedDomains.length > 0 && !hostnameAllowed(hostname, provider.allowedDomains)) {
+        vault.audit.log({ action: 'proxy_request', vault_ref, granted: false, blocking_rule: 'provider_domain_not_allowed', detail: JSON.stringify({ hostname }) });
+        return { content: [{ type: 'text' as const, text: `Error: Domain "${hostname}" is not an allowed domain for provider "${secret.service}"` }], isError: true };
+      }
+
+      if (secret.allowed_domains && secret.allowed_domains.length > 0 && !hostnameAllowed(hostname, secret.allowed_domains)) {
+        vault.audit.log({ action: 'proxy_request', vault_ref, granted: false, blocking_rule: 'domain_not_allowed', detail: JSON.stringify({ hostname }) });
+        return { content: [{ type: 'text' as const, text: `Error: Domain "${hostname}" not in allowed list for this secret` }], isError: true };
+      }
+
+      if (!provider && (!secret.allowed_domains || secret.allowed_domains.length === 0)) {
+        vault.audit.log({ action: 'proxy_request', vault_ref, granted: false, blocking_rule: 'domain_allowlist_required', detail: JSON.stringify({ hostname }) });
+        return { content: [{ type: 'text' as const, text: 'Error: Custom secrets require at least one allowed domain before proxy use' }], isError: true };
       }
 
       // Inject credential based on type
       const reqHeaders: Record<string, string> = { ...headers };
-      switch (secret.secret_type) {
-        case 'api_key':
-          reqHeaders['Authorization'] = `Bearer ${plaintext}`;
-          break;
-        case 'basic_auth':
-          reqHeaders['Authorization'] = `Basic ${Buffer.from(plaintext).toString('base64')}`;
-          break;
-        case 'custom_header': {
-          const headerName = (secret.metadata?.header_name as string) ?? 'X-API-Key';
-          reqHeaders[headerName] = plaintext;
-          break;
-        }
-        case 'oauth_token':
-          reqHeaders['Authorization'] = `Bearer ${plaintext}`;
-          break;
-        case 'query_param': {
-          const paramName = (secret.metadata?.query_param_name as string) ?? 'api_key';
-          const u = new URL(url);
-          u.searchParams.set(paramName, plaintext);
-          url = u.toString();
-          break;
+      let forwardUrl = url;
+      if (provider) {
+        provider.injectAuth(reqHeaders, plaintext, secret.secret_type);
+      } else {
+        switch (secret.secret_type) {
+          case 'api_key':
+          case 'oauth_token':
+            reqHeaders['Authorization'] = `Bearer ${plaintext}`;
+            break;
+          case 'basic_auth':
+            reqHeaders['Authorization'] = `Basic ${Buffer.from(plaintext).toString('base64')}`;
+            break;
+          case 'custom_header': {
+            const headerName = (secret.metadata?.header_name as string) ?? 'X-API-Key';
+            reqHeaders[headerName] = plaintext;
+            break;
+          }
+          case 'query_param': {
+            const paramName = (secret.metadata?.query_param_name as string) ?? 'api_key';
+            const u = new URL(url);
+            u.searchParams.set(paramName, plaintext);
+            forwardUrl = u.toString();
+            break;
+          }
         }
       }
 
@@ -97,11 +131,23 @@ tool(
         reqHeaders['Content-Type'] = 'application/json';
       }
 
-      const response = await fetch(url, {
-        method,
-        headers: reqHeaders,
-        body: body ? JSON.stringify(body) : undefined,
-      });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
+      let response: Response;
+      try {
+        response = await fetch(forwardUrl, {
+          method: upperMethod,
+          headers: reqHeaders,
+          body: body ? JSON.stringify(body) : undefined,
+          signal: controller.signal,
+        });
+      } catch (err) {
+        const isTimeout = (err as Error).name === 'AbortError';
+        vault.audit.log({ action: 'proxy_request', vault_ref, granted: false, blocking_rule: isTimeout ? 'timeout' : 'fetch_error' });
+        return { content: [{ type: 'text' as const, text: `Error: ${isTimeout ? 'Upstream request timed out' : 'Upstream request failed'}` }], isError: true };
+      } finally {
+        clearTimeout(timeout);
+      }
 
       const contentType = response.headers.get('content-type') ?? '';
       let responseBody: unknown;
@@ -111,24 +157,27 @@ tool(
         responseBody = await response.text();
       }
 
-      // Sanitize response — strip any echoed secrets from the response body
-      const responseStr = JSON.stringify(responseBody);
+      // Sanitize response — strip any echoed secrets (plaintext and encoded forms)
+      let sanitized = false;
+      let responseStr = JSON.stringify(responseBody);
       if (responseStr.includes(plaintext)) {
-        responseBody = JSON.parse(responseStr.replaceAll(plaintext, '[REDACTED]'));
-        vault.audit.log({
-          action: 'proxy_request',
-          vault_ref,
-          granted: true,
-          detail: JSON.stringify({ method, url: new URL(url).pathname, status: response.status, sanitized: true }),
-        });
-      } else {
-        vault.audit.log({
-          action: 'proxy_request',
-          vault_ref,
-          granted: true,
-          detail: JSON.stringify({ method, url: new URL(url).pathname, status: response.status }),
-        });
+        responseStr = responseStr.replaceAll(plaintext, '[REDACTED]');
+        sanitized = true;
       }
+      const base64Plaintext = Buffer.from(plaintext).toString('base64');
+      if (responseStr.includes(base64Plaintext)) {
+        responseStr = responseStr.replaceAll(base64Plaintext, '[REDACTED]');
+        sanitized = true;
+      }
+      if (sanitized) {
+        responseBody = JSON.parse(responseStr);
+      }
+      vault.audit.log({
+        action: 'proxy_request',
+        vault_ref,
+        granted: true,
+        detail: JSON.stringify({ method: upperMethod, url: new URL(forwardUrl).pathname, status: response.status, ...(sanitized ? { sanitized: true } : {}) }),
+      });
 
       return {
         content: [{

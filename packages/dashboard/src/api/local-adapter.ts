@@ -63,9 +63,9 @@ export function createLocalClient(): BlindKeyClient {
     },
 
     rotateSecret: async (id, plaintextValue): Promise<SecretItem> => {
-      return localApi<SecretItem>(`/secrets/${id}/rotate`, {
+      return localApi<SecretItem>('/secrets/rotate', {
         method: 'POST',
-        body: JSON.stringify({ plaintext_value: plaintextValue }),
+        body: JSON.stringify({ vault_ref: id, plaintext_value: plaintextValue }),
       });
     },
 

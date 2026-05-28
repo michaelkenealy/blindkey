@@ -185,9 +185,9 @@ export async function updateSecret(
 }
 
 export async function rotateSecret(id: string, plaintextValue: string): Promise<SecretMetadata> {
-  return api<SecretMetadata>(`/secrets/${encodeURIComponent(id)}/rotate`, {
+  return api<SecretMetadata>('/secrets/rotate', {
     method: 'POST',
-    body: JSON.stringify({ plaintext_value: plaintextValue }),
+    body: JSON.stringify({ vault_ref: id, plaintext_value: plaintextValue }),
   });
 }
 

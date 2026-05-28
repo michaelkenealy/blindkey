@@ -23,7 +23,8 @@ export const DEFAULT_FS_POLICIES: FsPolicyRule[] = [
     on: 'write',
     block_if_contains: [
       {
-        pattern: '(?i)(api[_-]?key|secret[_-]?key|password|token)\\s*[:=]\\s*["\']?[A-Za-z0-9_\\-]{16,}',
+        // Case-insensitive via explicit variants — (?i) is not valid JS regex syntax and silently fails open
+        pattern: '(api[_-]?key|API[_-]?KEY|Api[_-]?Key|secret[_-]?key|SECRET[_-]?KEY|Secret[_-]?Key|password|PASSWORD|Password|token|TOKEN|Token)\\s*[:=]\\s*["\']?[A-Za-z0-9_\\-]{16,}',
         message: 'Content appears to contain hardcoded secrets or API keys',
       },
       {

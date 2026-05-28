@@ -190,6 +190,69 @@ describe('fs-policy', () => {
       });
     });
 
+    describe('content scan — DEFAULT_FS_POLICIES regex compatibility', () => {
+      // Regression: the original pattern used (?i) which is invalid in JavaScript,
+      // causing the scan to silently fail open. These tests ensure the fixed patterns work.
+      const contentScanRules: FsPolicyRule[] = [
+        {
+          type: 'fs_content_scan',
+          on: 'write',
+          block_if_contains: [
+            {
+              pattern: '(api[_-]?key|API[_-]?KEY|Api[_-]?Key|secret[_-]?key|SECRET[_-]?KEY|Secret[_-]?Key|password|PASSWORD|Password|token|TOKEN|Token)\\s*[:=]\\s*["\']?[A-Za-z0-9_\\-]{16,}',
+              message: 'Hardcoded credential detected',
+            },
+          ],
+        },
+      ];
+
+      it('should block lowercase api_key pattern', () => {
+        const result = evaluateFsPolicy(contentScanRules, {
+          operation: 'write',
+          path: '/config.env',
+          content: 'api_key = abcdef1234567890abcdef',
+        });
+        expect(result.allowed).toBe(false);
+        expect(result.blocking_rule).toBe('fs_content_scan');
+      });
+
+      it('should block uppercase API_KEY pattern', () => {
+        const result = evaluateFsPolicy(contentScanRules, {
+          operation: 'write',
+          path: '/config.env',
+          content: 'API_KEY=abcdef1234567890abcdef',
+        });
+        expect(result.allowed).toBe(false);
+      });
+
+      it('should block password pattern', () => {
+        const result = evaluateFsPolicy(contentScanRules, {
+          operation: 'write',
+          path: '/config.env',
+          content: 'password=mysupersecretpassword123',
+        });
+        expect(result.allowed).toBe(false);
+      });
+
+      it('should allow content without credentials', () => {
+        const result = evaluateFsPolicy(contentScanRules, {
+          operation: 'write',
+          path: '/readme.md',
+          content: 'This is a safe readme file with no secrets.',
+        });
+        expect(result.allowed).toBe(true);
+      });
+
+      it('should not scan read operations', () => {
+        const result = evaluateFsPolicy(contentScanRules, {
+          operation: 'read',
+          path: '/config.env',
+          content: 'api_key = abcdef1234567890abcdef',
+        });
+        expect(result.allowed).toBe(true);
+      });
+    });
+
     describe('multiple rules', () => {
       it('should evaluate rules in order and stop at first block', () => {
         const rules: FsPolicyRule[] = [

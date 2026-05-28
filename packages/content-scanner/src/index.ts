@@ -97,6 +97,30 @@ export const DEFAULT_RULES: ScanRule[] = [
     severity: 'block',
     category: 'credential',
   },
+  {
+    pattern: 'sk-ant-[A-Za-z0-9\\-_]{20,}',
+    message: 'Anthropic API key detected',
+    severity: 'block',
+    category: 'credential',
+  },
+  {
+    pattern: 'sk_(live|test)_[A-Za-z0-9]{20,}',
+    message: 'Stripe secret key detected',
+    severity: 'block',
+    category: 'credential',
+  },
+  {
+    pattern: 'rk_(live|test)_[A-Za-z0-9]{20,}',
+    message: 'Stripe restricted key detected',
+    severity: 'block',
+    category: 'credential',
+  },
+  {
+    pattern: 'ey[A-Za-z0-9_\\-]{20,}\\.[A-Za-z0-9_\\-]{20,}\\.[A-Za-z0-9_\\-]{20,}',
+    message: 'JWT token detected',
+    severity: 'warn',
+    category: 'credential',
+  },
 ];
 
 // ── Pattern Validation (ReDoS protection) ──

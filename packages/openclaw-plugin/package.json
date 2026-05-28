@@ -39,6 +39,7 @@
   "dependencies": {
     "@blindkey/core": "0.1.0",
     "@blindkey/local-vault": "0.1.0",
+    "@blindkey/providers": "0.1.0",
     "@sinclair/typebox": "^0.34.0"
   },
   "devDependencies": {

@@ -1,0 +1,69 @@
+Your AI Agent Has Your Stripe Key in Plaintext
+
+Every MCP server tutorial tells you the same thing: paste your API key into a JSON config file. That file sits on disk, in plaintext, readable by every process on your machine.
+
+We'd never do this in production. So why are we doing it for AI agents?
+
+
+THE PROBLEM IS WORSE THAN YOU THINK
+
+When you give an AI agent access to an API, the agent typically holds your credential in memory for the entire session. It can log it. Cache it. Accidentally write it into a file. Include it in a response. There's no access control, no audit trail, and no way to know what happened after the fact.
+
+GitGuardian's 2026 State of Secrets Sprawl report found 29 million secrets leaked on public GitHub last year — an 81% increase driven by AI-assisted development. MCP had 30 CVEs in its first 60 days. A critical LangChain vulnerability (CVE-2025-68664) allowed secret exfiltration through prompt injection.
+
+This isn't theoretical. It's happening now, and AI agents are accelerating it.
+
+
+WHAT BLIND CREDENTIAL INJECTION LOOKS LIKE
+
+I built BlindKey to fix this. The core idea is simple: the agent never sees the real key.
+
+  Your Agent --> "Use bk://stripe" --> BlindKey --> [injects real key] --> Stripe API
+  Your Agent <-- response <----------- BlindKey <-- response <---------- Stripe API
+
+The agent references bk://stripe. BlindKey intercepts the outbound request, swaps in the real credential, and forwards it. The response comes back clean. At no point does the agent touch, see, or store the actual API key.
+
+Every secret is AES-256-GCM encrypted at rest. Every access is logged in a tamper-proof hash chain — if someone modifies a log entry, the chain breaks and you know immediately.
+
+
+CREDENTIALS ARE ONLY HALF THE PROBLEM
+
+Blind injection handles the authentication layer. But what about everything else the agent can do?
+
+What files can it read? By default, BlindKey blocks all filesystem access. You explicitly grant per-path permissions — read, write, or both. An agent with access to ./src cannot touch ./credentials or ~/.ssh.
+
+What if it leaks a secret? Every write operation passes through a content scanner that checks for accidentally exposed API keys, tokens, and PII patterns. If your agent tries to write your Stripe key into a README, BlindKey catches it before it hits disk.
+
+Who did what, and when? The audit log records every credential access, every file operation, every policy decision. The hash chain is tamper-evident — you can cryptographically verify that no entries have been modified or deleted.
+
+
+HOW IT COMPARES
+
+Most tools in this space solve one piece of the problem. Password managers (1Password, Bitwarden, Keeper) now have MCP servers, but the agent still receives the credential once resolved — it enters process memory. Infrastructure tools like HashiCorp Vault are designed for server-to-server auth, not local AI development.
+
+A few projects have started doing blind injection — OneCLI (Rust HTTP gateway), nono (kernel-level sandbox with phantom tokens), AgentKeys (proxy with reference tokens). These are solid, but they're proxy-only. None add filesystem gating, content scanning, or a policy engine.
+
+BlindKey is the only tool that combines blind injection, MCP integration, filesystem gating, content scanning, and audit logging in one local-first package.
+
+
+GET STARTED IN 30 SECONDS
+
+  npm install -g @blindkey/cli
+  bk setup
+
+The setup wizard initializes your encrypted vault, generates a master key, and walks you through adding your first secret.
+
+Works with Claude Desktop — just add to your MCP config:
+
+  "blindkey": { "command": "bk", "args": ["serve", "--mcp"] }
+
+The agent gets 7 security-aware tools: bk_proxy (authenticated requests), bk_list_secrets (references only, never values), bk_fs_read, bk_fs_write, bk_fs_list, bk_fs_info, and bk_list_grants.
+
+
+OPEN SOURCE, LOCAL-FIRST
+
+MIT licensed. Everything runs locally — SQLite vault, no cloud, no account required. Your secrets never leave your machine.
+
+github.com/michaelkenealy/blindkey
+
+If you're building AI agents that call APIs, this is the security layer that should sit between your agent and your credentials. The agent is blind to the key — and that's the point.

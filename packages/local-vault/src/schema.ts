@@ -54,6 +54,14 @@ export function initializeSchema(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_local_audit_log_created_at ON audit_log (created_at);
+
+    CREATE TABLE IF NOT EXISTS named_refs (
+      name TEXT PRIMARY KEY,
+      vault_ref TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (vault_ref) REFERENCES secrets(vault_ref) ON DELETE CASCADE
+    );
   `);
 
   ensureColumn(db, 'audit_log', 'prev_hash', 'TEXT');

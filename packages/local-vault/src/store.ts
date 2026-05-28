@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { encrypt, decrypt, generateVaultRef } from '@blindkey/core';
-import type { VaultBackend, DecryptedSecret, SecretStoreInput, SecretMetadata, Secret, SecretType } from '@blindkey/core';
+import type { VaultBackend, NamedRef, DecryptedSecret, SecretStoreInput, SecretMetadata, Secret, SecretType } from '@blindkey/core';
 
 interface SecretRow {
   vault_ref: string;
@@ -109,7 +109,11 @@ export class SQLiteVaultBackend implements VaultBackend {
   }
 
   async deleteSecret(vaultRef: string): Promise<void> {
-    this.db.prepare('DELETE FROM secrets WHERE vault_ref = ?').run(vaultRef);
+    const tx = this.db.transaction((ref: string) => {
+      this.db.prepare('DELETE FROM named_refs WHERE vault_ref = ?').run(ref);
+      this.db.prepare('DELETE FROM secrets WHERE vault_ref = ?').run(ref);
+    });
+    tx(vaultRef);
   }
 
   async listSecrets(vaultRefs: string[]): Promise<SecretMetadata[]> {
@@ -147,5 +151,34 @@ export class SQLiteVaultBackend implements VaultBackend {
   deleteSecretByName(name: string): boolean {
     const result = this.db.prepare('DELETE FROM secrets WHERE name = ?').run(name);
     return result.changes > 0;
+  }
+
+  async getRef(name: string): Promise<NamedRef | null> {
+    const row = this.db.prepare('SELECT * FROM named_refs WHERE name = ?').get(name) as { name: string; vault_ref: string; provider: string; created_at: string } | undefined;
+    if (!row) return null;
+    return { name: row.name, vault_ref: row.vault_ref, provider: row.provider, created_at: new Date(row.created_at) };
+  }
+
+  async setRef(name: string, vaultRef: string, provider: string): Promise<void> {
+    const target = this.db.prepare('SELECT vault_ref FROM secrets WHERE vault_ref = ?').get(vaultRef);
+    if (!target) {
+      throw new Error(`Cannot create ref "${name}": secret not found: ${vaultRef}`);
+    }
+
+    this.db.prepare(`
+      INSERT INTO named_refs (name, vault_ref, provider)
+      VALUES (?, ?, ?)
+      ON CONFLICT(name) DO UPDATE SET vault_ref = excluded.vault_ref, provider = excluded.provider
+    `).run(name, vaultRef, provider);
+  }
+
+  async deleteRef(name: string): Promise<boolean> {
+    const result = this.db.prepare('DELETE FROM named_refs WHERE name = ?').run(name);
+    return result.changes > 0;
+  }
+
+  async listRefs(): Promise<NamedRef[]> {
+    const rows = this.db.prepare('SELECT * FROM named_refs ORDER BY created_at ASC').all() as Array<{ name: string; vault_ref: string; provider: string; created_at: string }>;
+    return rows.map((r) => ({ name: r.name, vault_ref: r.vault_ref, provider: r.provider, created_at: new Date(r.created_at) }));
   }
 }

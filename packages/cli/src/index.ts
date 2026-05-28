@@ -18,6 +18,7 @@ import { registerDoctorCommand } from './commands/doctor.js';
 import { registerMigrateCommand } from './commands/migrate.js';
 import { registerInitCommand } from './commands/init.js';
 import { registerSetupCommand } from './commands/setup.js';
+import { registerRefCommand } from './commands/ref.js';
 
 const program = new Command();
 
@@ -52,5 +53,6 @@ registerDoctorCommand(program, getVault);
 registerMigrateCommand(program, getVault);
 registerInitCommand(program, getVault);
 registerSetupCommand(program, getVault);
+registerRefCommand(program, getVault);
 
 program.parse();

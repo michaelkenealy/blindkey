@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { chmod } from 'node:fs/promises';
 import { loadMasterKey, getDbPath, getVaultDir } from './master-key.js';
 import { initializeSchema } from './schema.js';
 import { SQLiteVaultBackend } from './store.js';
@@ -14,6 +15,7 @@ export type { AuditEntry, AuditRow } from './audit.js';
 export type { PolicyRow } from './policies.js';
 export { loadMasterKey, getDbPath, getVaultDir } from './master-key.js';
 export { DEFAULT_FS_POLICIES, checkFsAccess } from './fs-access.js';
+export { initializeSchema } from './schema.js';
 
 export interface LocalVault {
   db: Database.Database;
@@ -34,6 +36,10 @@ export async function createLocalVault(): Promise<LocalVault> {
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+  db.pragma('secure_delete = ON');
+
+  // Restrict vault.db to owner-only — non-fatal on Windows where chmod is unsupported
+  try { await chmod(dbPath, 0o600); } catch { /* Windows */ }
 
   initializeSchema(db);
 

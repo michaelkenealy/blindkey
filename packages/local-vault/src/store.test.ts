@@ -191,6 +191,26 @@ describe('local-vault', () => {
       const result = await store.getSecret(vaultRef);
       expect(result!.secret.metadata).toEqual({ header_name: 'X-API-Key' });
     });
+
+    it('should reject refs to missing secrets', async () => {
+      await expect(store.setRef('missing', 'bk://missing-ref', 'openai')).rejects.toThrow('secret not found');
+    });
+
+    it('should remove refs when a secret is deleted', async () => {
+      const { vaultRef } = await store.storeSecret({
+        user_id: 'local',
+        name: 'ref-target',
+        service: 'openai',
+        secret_type: 'api_key',
+        plaintext_value: 'secret',
+      });
+
+      await store.setRef('openai-prod', vaultRef, 'openai');
+      expect(await store.getRef('openai-prod')).not.toBeNull();
+
+      await store.deleteSecret(vaultRef);
+      expect(await store.getRef('openai-prod')).toBeNull();
+    });
   });
 
   describe('LocalGrantService', () => {

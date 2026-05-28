@@ -1,6 +1,24 @@
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
 *.tsbuildinfo
 .turbo/
 .claude/
+
+# Private/local security material
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.kdbx
+vault.db
+*.vault.db
+.blindkey/
+
+# Local research/scrape output; publish only sanitized fixtures under examples/ or docs/
+data/
+scripts/

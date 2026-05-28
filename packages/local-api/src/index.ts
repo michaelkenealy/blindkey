@@ -12,22 +12,63 @@
  * localhost.
  */
 
+import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { createLocalVault, type LocalVault } from '@blindkey/local-vault';
 import type { FsPolicyRule } from '@blindkey/core';
+import { getProvider } from '@blindkey/providers';
 
-const LOCAL_TOKEN = 'blindkey-local-dev';
+export const LOCAL_TOKEN = process.env.BLINDKEY_LOCAL_TOKEN ?? randomBytes(32).toString('base64url');
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3200);
+const ALLOWED_PROXY_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
+const MAX_AUDIT_LIMIT = 1000;
 
 let vault: LocalVault;
 
-async function main() {
-  vault = await createLocalVault();
+function hostnameAllowed(hostname: string, allowedDomains: string[]): boolean {
+  const actual = hostname.toLowerCase();
+  return allowedDomains.some((domain) => {
+    const normalized = domain.toLowerCase();
+    if (normalized.startsWith('*.')) {
+      return actual.endsWith(normalized.slice(1)) || actual === normalized.slice(2);
+    }
+    return actual === normalized;
+  });
+}
+
+export async function buildApp(v: LocalVault) {
+  vault = v;
 
   const app = Fastify({ logger: false });
 
-  await app.register(cors, { origin: true });
+  // Only allow requests from localhost origins to prevent cross-site credential theft
+  await app.register(cors, {
+    origin: (origin, cb) => {
+      if (!origin) { cb(null, true); return; } // non-browser / same-origin requests
+      try {
+        const { hostname } = new URL(origin);
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+          cb(null, true);
+        } else {
+          cb(new Error('CORS: origin not allowed'), false);
+        }
+      } catch {
+        cb(new Error('CORS: invalid origin'), false);
+      }
+    },
+  });
+
+  // Require Bearer token on all non-auth routes
+  app.addHook('preHandler', async (request, reply) => {
+    const path = request.url.split('?')[0];
+    if (path === '/v1/auth/register' || path === '/v1/auth/login' || path === '/v1/auth/totp-status') return;
+    const auth = request.headers.authorization;
+    if (auth !== `Bearer ${LOCAL_TOKEN}`) {
+      return reply.code(401).send({ message: 'Unauthorized' });
+    }
+  });
 
   // ── Auth (simplified — local single-user) ──
 
@@ -135,11 +176,15 @@ async function main() {
     return reply.code(204).send();
   });
 
-  app.post<{ Params: { '*': string }; Body: { plaintext_value: string } }>(
-    '/v1/secrets/*/rotate',
+  // Rotate a secret — vault_ref in body because wildcards can't appear mid-path in find-my-way (Fastify 5)
+  app.post<{ Body: { vault_ref: string; plaintext_value: string } }>(
+    '/v1/secrets/rotate',
     async (request, reply) => {
-      const id = decodeURIComponent(request.params['*']);
-      const { plaintext_value } = request.body;
+      const { vault_ref: id, plaintext_value } = request.body;
+
+      if (!id) {
+        return reply.code(400).send({ message: 'vault_ref is required' });
+      }
 
       if (!plaintext_value) {
         return reply.code(400).send({ message: 'plaintext_value is required' });
@@ -238,7 +283,7 @@ async function main() {
   // ── Audit Log ──
 
   app.get<{ Querystring: { limit?: string } }>('/v1/audit', async (request, reply) => {
-    const limit = parseInt(request.query.limit ?? '100', 10);
+    const limit = Math.min(Math.max(1, parseInt(request.query.limit ?? '100', 10) || 100), MAX_AUDIT_LIMIT);
     const entries = vault.audit.recent(limit);
     return reply.send({ entries });
   });
@@ -274,24 +319,237 @@ async function main() {
     },
   );
 
+  // ── Proxy ──
+
+  app.post<{
+    Body: {
+      vault_ref: string;
+      method: string;
+      url: string;
+      headers?: Record<string, string>;
+      body?: unknown;
+    };
+  }>('/v1/proxy', async (request, reply) => {
+    const { vault_ref: refInput, method, url, headers: extraHeaders, body: reqBody } = request.body;
+
+    if (!refInput || !method || !url) {
+      return reply.code(400).send({ message: 'vault_ref, method, and url are required' });
+    }
+
+    const upperMethod = method.toUpperCase();
+    if (!ALLOWED_PROXY_METHODS.has(upperMethod)) {
+      return reply.code(400).send({ message: `Method "${method}" is not allowed` });
+    }
+
+    // Validate URL protocol to prevent SSRF via file://, ftp://, etc.
+    let parsedTarget: URL;
+    try {
+      parsedTarget = new URL(url);
+    } catch {
+      return reply.code(400).send({ message: 'Invalid URL' });
+    }
+    if (parsedTarget.protocol !== 'https:' && parsedTarget.protocol !== 'http:') {
+      return reply.code(400).send({ message: 'Only http:// and https:// URLs are allowed' });
+    }
+
+    // Resolve named ref if input is not a raw vault_ref
+    let vaultRef = refInput;
+    let providerName: string | null = null;
+    if (!refInput.startsWith('bk://')) {
+      const named = await vault.store.getRef(refInput);
+      if (!named) {
+        return reply.code(404).send({ message: `Named ref "${refInput}" not found` });
+      }
+      vaultRef = named.vault_ref;
+      providerName = named.provider;
+    }
+
+    const result = await vault.store.getSecret(vaultRef);
+    if (!result) {
+      vault.audit.log({ action: 'proxy_request', vault_ref: vaultRef, granted: false, blocking_rule: 'not_found' });
+      return reply.code(404).send({ message: `Secret not found: ${vaultRef}` });
+    }
+
+    const { secret, plaintext } = result;
+
+    // Domain check — reuse already-validated parsedTarget
+    const hostname = parsedTarget.hostname;
+    const provider = providerName ? getProvider(providerName) : getProvider(secret.service);
+
+    if (provider && provider.allowedDomains.length > 0 && !hostnameAllowed(hostname, provider.allowedDomains)) {
+      vault.audit.log({ action: 'proxy_request', vault_ref: vaultRef, granted: false, blocking_rule: 'provider_domain_not_allowed', detail: JSON.stringify({ hostname }) });
+      return reply.code(403).send({ message: `Domain "${hostname}" is not an allowed domain for provider "${secret.service}"` });
+    }
+
+    if (secret.allowed_domains && secret.allowed_domains.length > 0 && !hostnameAllowed(hostname, secret.allowed_domains)) {
+      vault.audit.log({ action: 'proxy_request', vault_ref: vaultRef, granted: false, blocking_rule: 'domain_not_allowed', detail: JSON.stringify({ hostname }) });
+      return reply.code(403).send({ message: `Domain "${hostname}" not in allowed list for this secret` });
+    }
+
+    if (!provider && (!secret.allowed_domains || secret.allowed_domains.length === 0)) {
+      vault.audit.log({ action: 'proxy_request', vault_ref: vaultRef, granted: false, blocking_rule: 'domain_allowlist_required', detail: JSON.stringify({ hostname }) });
+      return reply.code(403).send({ message: 'Custom secrets require at least one allowed domain before proxy use' });
+    }
+
+    // Inject auth via provider adapter (if known) or fall back to secret_type heuristic
+    const reqHeaders: Record<string, string> = { ...extraHeaders };
+    if (provider) {
+      provider.injectAuth(reqHeaders, plaintext, secret.secret_type);
+    } else {
+      switch (secret.secret_type) {
+        case 'api_key':
+        case 'oauth_token':
+          reqHeaders['Authorization'] = `Bearer ${plaintext}`;
+          break;
+        case 'basic_auth':
+          reqHeaders['Authorization'] = `Basic ${Buffer.from(plaintext).toString('base64')}`;
+          break;
+        case 'custom_header': {
+          const headerName = (secret.metadata?.header_name as string) ?? 'X-API-Key';
+          reqHeaders[headerName] = plaintext;
+          break;
+        }
+        // query_param: auth goes into the URL (see forwardUrl below), not a header
+      }
+    }
+
+    if (!reqHeaders['Content-Type'] && reqBody) {
+      reqHeaders['Content-Type'] = 'application/json';
+    }
+
+    const forwardUrl = secret.secret_type === 'query_param' && !provider
+      ? (() => { const u = new URL(url); u.searchParams.set((secret.metadata?.query_param_name as string) ?? 'api_key', plaintext); return u.toString(); })()
+      : url;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    let response: Response;
+    try {
+      response = await fetch(forwardUrl, {
+        method: upperMethod,
+        headers: reqHeaders,
+        body: reqBody !== undefined ? JSON.stringify(reqBody) : undefined,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timeout);
+      const isTimeout = (err as Error).name === 'AbortError';
+      vault.audit.log({
+        action: 'proxy_request',
+        vault_ref: vaultRef,
+        granted: false,
+        blocking_rule: isTimeout ? 'timeout' : 'fetch_error',
+      });
+      if (isTimeout) {
+        return reply.code(504).send({ message: 'Upstream request timed out' });
+      }
+      return reply.code(502).send({ message: 'Upstream request failed' });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const contentType = response.headers.get('content-type') ?? '';
+    let responseBody: unknown;
+    if (contentType.includes('application/json')) {
+      responseBody = await response.json();
+    } else {
+      responseBody = await response.text();
+    }
+
+    // Redact plaintext and base64-encoded forms from response
+    let sanitized = false;
+    let responseStr = JSON.stringify(responseBody);
+    if (responseStr.includes(plaintext)) {
+      responseStr = responseStr.replaceAll(plaintext, '[REDACTED]');
+      sanitized = true;
+    }
+    const base64Plaintext = Buffer.from(plaintext).toString('base64');
+    if (responseStr.includes(base64Plaintext)) {
+      responseStr = responseStr.replaceAll(base64Plaintext, '[REDACTED]');
+      sanitized = true;
+    }
+    if (sanitized) {
+      responseBody = JSON.parse(responseStr);
+    }
+
+    // Estimate cost if provider supports it
+    const costCents = provider ? provider.estimateCostCents(responseBody) : 0;
+    const model = provider ? provider.extractModel(reqBody) : null;
+
+    vault.audit.log({
+      action: 'proxy_request',
+      vault_ref: vaultRef,
+      granted: true,
+      detail: JSON.stringify({
+        method,
+        url: new URL(forwardUrl).pathname,
+        status: response.status,
+        ...(model ? { model } : {}),
+        ...(costCents ? { cost_cents: costCents } : {}),
+        ...(sanitized ? { sanitized: true } : {}),
+      }),
+    });
+
+    return reply.code(response.status).send({ status: response.status, body: responseBody });
+  });
+
+  // ── Named Refs ──
+
+  app.get('/v1/refs', async (_request, reply) => {
+    const refs = await vault.store.listRefs();
+    return reply.send({ refs });
+  });
+
+  app.post<{ Body: { name: string; vault_ref: string; provider: string } }>(
+    '/v1/refs',
+    async (request, reply) => {
+      const { name, vault_ref, provider } = request.body;
+      if (!name || !vault_ref || !provider) {
+        return reply.code(400).send({ message: 'name, vault_ref, and provider are required' });
+      }
+      await vault.store.setRef(name, vault_ref, provider);
+      const ref = await vault.store.getRef(name);
+      return reply.code(201).send({ ref });
+    },
+  );
+
+  app.delete<{ Params: { name: string } }>('/v1/refs/:name', async (request, reply) => {
+    const removed = await vault.store.deleteRef(request.params.name);
+    if (!removed) {
+      return reply.code(404).send({ message: 'Ref not found' });
+    }
+    return reply.code(204).send();
+  });
+
   // ── Config (mode detection) ──
 
   app.get('/v1/config', async (_request, reply) => {
     return reply.send({ mode: 'local', version: '0.1.0' });
   });
 
-  // ── Start ──
+  return app;
+}
+
+async function main() {
+  const v = await createLocalVault();
+  const app = await buildApp(v);
 
   await app.listen({ port: PORT, host: '127.0.0.1' });
 
-  const secretCount = (await vault.store.listSecrets([])).length;
-  const grantCount = vault.grants.getAll().length;
+  const secretCount = (await v.store.listSecrets([])).length;
+  const grantCount = v.grants.getAll().length;
   console.log(`BlindKey local API running at http://127.0.0.1:${PORT}`);
   console.log(`Vault: ~/.blindkey/vault.db`);
   console.log(`Loaded: ${secretCount} secret(s), ${grantCount} grant(s)`);
 }
 
-main().catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+// Only start the server when this file is the entry point (not when imported by tests)
+const __filename = fileURLToPath(import.meta.url);
+const normArgv = (process.argv[1] ?? '').replace(/\\/g, '/');
+const normSelf = __filename.replace(/\\/g, '/');
+if (normArgv === normSelf || normArgv.endsWith('blindkey-local-api')) {
+  main().catch((err) => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}

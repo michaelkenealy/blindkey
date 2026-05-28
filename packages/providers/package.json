@@ -1,0 +1,39 @@
+{
+  "name": "@blindkey/providers",
+  "version": "0.1.0",
+  "description": "Provider adapters for BlindKey proxy (OpenAI, Anthropic, Stripe, GitHub)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "blindkey",
+    "providers",
+    "openai",
+    "anthropic",
+    "stripe",
+    "github"
+  ],
+  "author": "Michael Kenealy",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  }
+}

@@ -65,6 +65,31 @@ describe('content-scanner', () => {
       const result = scanContent('sk-or-v1-' + 'a'.repeat(48));
       expect(result.allowed).toBe(false);
     });
+
+    it('should detect Anthropic API keys', () => {
+      const result = scanContent('key = sk-ant-api03-' + 'a'.repeat(30));
+      expect(result.allowed).toBe(false);
+      expect(result.violations.some(v => v.rule.message.includes('Anthropic'))).toBe(true);
+    });
+
+    it('should detect Stripe secret keys', () => {
+      expect(scanContent('STRIPE_KEY=sk_live_' + 'a'.repeat(24)).allowed).toBe(false);
+      expect(scanContent('STRIPE_KEY=sk_test_' + 'a'.repeat(24)).allowed).toBe(false);
+    });
+
+    it('should detect Stripe restricted keys', () => {
+      const result = scanContent('rk_live_' + 'a'.repeat(24));
+      expect(result.allowed).toBe(false);
+    });
+
+    it('should warn on JWT tokens', () => {
+      // Real-looking JWT: header.payload.signature (all base64url segments >= 20 chars)
+      const header = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9';
+      const payload = 'eyJzdWIiOiJ1c2VyMTIzNDU2Nzg5MCIsIm5hbWUiOiJKb2huIn0';
+      const sig = 'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+      const result = scanContent(`Authorization: Bearer ${header}.${payload}.${sig}`);
+      expect(result.violations.some(v => v.rule.message.includes('JWT'))).toBe(true);
+    });
   });
 
   describe('scanContent with custom rules', () => {
